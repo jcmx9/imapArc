@@ -1,0 +1,124 @@
+# imapArc conversation profiles. Copy to profile.yaml and adapt.
+#
+# A profile is a "conversation": rules that select which messages belong
+# together, where to archive them, and what to do with the source message
+# afterwards. Each profile scans the folders it lists; within a scanned folder
+# the first profile (in file order) whose header rules match a message wins.
+# Every run re-evaluates all mail against the current profiles, so adding or
+# changing a profile takes effect on existing mail with no manual state reset.
+#
+# Every matched message is archived as a readable .eml under <output>/eml/.
+# Rendering to PDF is optional (pdf: true) and lands under <output>/pdf/.
+#
+# Below: every parameter, its function, and its default. Optional keys can be
+# omitted entirely — the default then applies.
+
+profiles:
+  # ── Profile 1: fully annotated ───────────────────────────────────────────
+  - name: hetzner                    # REQUIRED. Identifier for this conversation.
+                                     #   Becomes the middle segment of every PDF
+                                     #   filename (…_hetzner_…). No default.
+
+    account: privat                  # REQUIRED. Which IMAP account to read from;
+                                     #   references IMAP_PRIVAT_* in .env
+                                     #   (case-insensitive). No default.
+
+    match:                           # Optional. Selection rules. A message must
+                                     #   satisfy EVERY rule that is set (AND).
+                                     #   With no rules at all, every message in
+                                     #   the scanned folders matches.
+                                     #
+                                     #   domains and addresses form ONE group: a
+                                     #   message passes it if the sender hits ANY
+                                     #   listed domain OR ANY listed address (OR).
+                                     #   Both are arrays.
+      domains: ['@hetzner.com']      #   Optional, default []. Sender domains,
+                                     #   each written with a leading "@" so it is
+                                     #   unmistakably a domain (not an address).
+                                     #   Matches that exact domain AND its
+                                     #   subdomains (…@rechnung.hetzner.com too).
+      addresses: [billing@hetzner.com]  # Optional, default []. EXACT addresses
+                                     #   (full user@domain), no "@" prefix —
+                                     #   these match only that address.
+      mode: [from, to, cc, bcc]      #   Optional, default all four. Which address
+                                     #   header fields domains/addresses are
+                                     #   searched in. e.g. mode: [to] matches on
+                                     #   the recipient, not the sender.
+      subject: '^Rechnung'           #   Optional, default null. EITHER a Python
+                                     #   regex (searched, not anchored) as here,
+                                     #   OR a list of case-insensitive wildcard
+                                     #   patterns, any of which may match, e.g.
+                                     #   subject: ['*Rechnung*', 'Invoice*']
+      attachments: [pdf]             #   Optional, default []. Require an attachment
+                                     #   of one of these types (dot optional:
+                                     #   pdf, .docx). Empty = no requirement.
+      folders: [INBOX]               #   Optional, default [INBOX]. IMAP folders
+                                     #   to scan for this profile.
+      recursive: false               #   Optional, default false. Also scan the
+                                     #   subfolders of each listed folder. [INBOX]
+                                     #   alone is NOT recursive.
+      trash: false                   #   Optional, default false. Whether a
+                                     #   recursive scan descends into the Trash
+                                     #   folder (RFC 6154 \Trash, detected
+                                     #   automatically). Listing Trash explicitly
+                                     #   in folders always scans it.
+      since: 2026-01-01              #   Optional, default null. Ignore messages
+                                     #   dated before this day (YYYY-MM-DD).
+      until: 2026-12-31              #   Optional, default null. Ignore messages
+                                     #   dated after this day (inclusive window
+                                     #   with since).
+
+    output: ~/Archiv/Hetzner         # REQUIRED. Target directory. eml/ is
+                                     #   always created here; pdf/ is added when
+                                     #   pdf is true. "~" is expanded. No default.
+
+    pdf: true                        # Optional, default false. When true, also
+                                     #   render each message into its own folder
+                                     #   <basename>/: <basename>.pdf (mail +
+                                     #   attachment pages) and, when attachments
+                                     #   exist, <basename>_mailonly.pdf plus the
+                                     #   original attachment files.
+
+    remote_images: false             # Optional, default false. Load external
+                                     #   images when rendering (privacy/security
+                                     #   trade-off). The CLI --allow-remote-images
+                                     #   forces this on for all profiles.
+    jobs: 4                          # Optional, default 4. Parallel renders for this
+                                     #   profile. The CLI --jobs overrides it.
+
+    after_fetch:                     # Optional, default null. Server-side action
+                                     #   applied ONLY after the message is durably
+                                     #   in the eml archive and marked delivered — so
+                                     #   nothing can be lost before it is archived.
+      label: Archiviert              #   Optional, default null. IMAP keyword to
+                                     #   add to the source message.
+      move_to: Archiv/Erledigt       #   Optional, default null. Move the source
+                                     #   message into this folder (created if
+                                     #   missing). Runs after label.
+                                     #   Mutually exclusive with delete.
+      # delete: false                #   Optional, default false. Permanently
+                                     #   remove the source message from the server
+                                     #   (\Deleted + expunge). Mutually exclusive
+                                     #   with move_to. See Profile 2.
+
+  # ── Profile 2: minimal, deletes the source after archiving ───────────────
+  - name: newsletter
+    account: privat
+    match:
+      domains: ['@news.example.com']
+    output: ~/Archiv/Newsletter
+    # pdf omitted -> false (eml only, no PDF rendering)
+    after_fetch:
+      delete: true                   # Remove from the server once safely archived.
+                                     # Do NOT also set move_to — that is rejected
+                                     # at config load (mutually exclusive).
+
+  # ── Profile 3: catch-all, no post-fetch action ──────────────────────────
+  - name: work
+    account: arbeit                  # references IMAP_ARBEIT_* in .env
+    match:
+      folders: [INBOX, Projekte]     # scan two folders; no sender/subject rule
+                                     # -> every message in them matches
+    output: ~/Archiv/Arbeit
+    pdf: true
+    # after_fetch omitted -> the source message is left untouched on the server.

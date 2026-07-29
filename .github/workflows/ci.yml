@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install external tools
+        # poppler-utils provides pdftotext, which the render tests use to read
+        # the text layer back out of a produced PDF. icc-profiles-free provides
+        # /usr/share/color/icc/sRGB.icc, embedded as the PDF/A output intent.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghostscript qpdf poppler-utils icc-profiles-free
+          ls -l /usr/share/color/icc/ || true
+
+      - name: Install veraPDF
+        # Not packaged for apt. Without it the PDF/A validation tests skip,
+        # which also drops the measured coverage below the gate.
+        run: |
+          curl -sL https://software.verapdf.org/rel/verapdf-installer.zip -o /tmp/verapdf.zip
+          unzip -q /tmp/verapdf.zip -d /tmp
+          installer=$(find /tmp -maxdepth 1 -type d -name 'verapdf-greenfield-*' | head -1)
+          sed "s|__INSTALL_PATH__|$HOME/verapdf|" .github/verapdf-auto-install.xml \
+            > /tmp/verapdf-auto-install.xml
+          "$installer/verapdf-install" /tmp/verapdf-auto-install.xml
+          echo "$HOME/verapdf" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Lint (ruff check)
+        run: uv run ruff check src/ tests/
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check src/ tests/
+
+      - name: Type check (mypy)
+        run: uv run mypy src/
+
+      - name: Tests with coverage
+        run: uv run pytest --cov-report=xml

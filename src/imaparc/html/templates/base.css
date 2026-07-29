@@ -1,0 +1,133 @@
+/* Shared styles for all imapArc-generated pages (separators, info pages,
+   text version, header block). Kept deliberately minimal and system-font
+   based so it renders identically wherever Chromium runs. */
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  color: #1a1a1a;
+  font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, "Liberation Sans",
+    "DejaVu Sans", sans-serif;
+  font-size: 11pt;
+  line-height: 1.45;
+}
+
+.page {
+  /* No padding here — the page margin is the Chromium print margin (per
+     rendition). CSS padding would stack on top of it and double the margin. */
+  padding: 0;
+}
+
+/* --- Header block prepended to the mail body --- */
+.m2p-header {
+  border-bottom: 0.5pt solid #b4b4b4;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  font-size: 10pt;
+}
+
+.m2p-header .row {
+  margin: 0 0 2px 0;
+}
+
+.m2p-header .label {
+  font-weight: 700;
+}
+
+/* --- Separator / info cards, sitting in the upper-middle of the page --- */
+.card-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 78vh;
+  padding-top: 8vh;
+}
+
+.card {
+  border: 0.75pt solid #dcdcdc;
+  border-radius: 8px;
+  background: #fcfcfc;
+  padding: 36px 46px;
+  text-align: center;
+  max-width: 132mm;
+}
+
+.card .eyebrow {
+  font-size: 8.5pt;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+  margin-bottom: 12px;
+}
+
+.card .title {
+  font-size: 15pt;
+  font-weight: 600;
+  color: #1a1a1a;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.card .meta {
+  display: inline-block;
+  font-size: 9.5pt;
+  color: #6b7280;
+  letter-spacing: 0.02em;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 0.5pt solid #ececec;
+}
+
+.card .explain {
+  font-size: 10pt;
+  color: #4a4a4a;
+  line-height: 1.55;
+  margin-top: 14px;
+}
+
+/* Info page: a warm hairline flags "kept as original, not converted". */
+.card.info {
+  border-color: #e3c07a;
+  background: #fffdf6;
+}
+
+/* Section divider between body renditions — a calm centred chapter break. */
+.section-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 78vh;
+  padding-top: 8vh;
+}
+
+.section-wrap .title {
+  font-size: 11pt;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8a9096;
+  text-align: center;
+  padding-bottom: 12px;
+  border-bottom: 0.75pt solid #dcdcdc;
+}
+
+/* --- Plain-text version --- */
+.text-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 10pt;
+}

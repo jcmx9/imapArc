@@ -1,0 +1,12 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="card-wrap">
+  <div class="card info">
+    <div class="eyebrow">Anhang {{ index }} &middot; Original</div>
+    <div class="title">{{ filename }}</div>
+    <div class="explain">{{ reason }}</div>
+    <div class="explain">Die Originaldatei liegt im Ordner und ist in dieses PDF eingebettet.</div>
+    <div class="meta">{{ mime }} &middot; {{ size }}</div>
+  </div>
+</div>
+{% endblock %}

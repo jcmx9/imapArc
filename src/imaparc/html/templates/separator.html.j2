@@ -1,0 +1,10 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="card-wrap">
+  <div class="card">
+    <div class="eyebrow">Anhang {{ index }}</div>
+    <div class="title">{{ filename }}</div>
+    <div class="meta">{{ pages }} Seite{{ "" if pages == 1 else "n" }} &middot; {{ size }}</div>
+  </div>
+</div>
+{% endblock %}

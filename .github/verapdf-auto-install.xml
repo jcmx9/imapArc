@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  Headless install descriptor for the veraPDF IzPack installer, used by ci.yml.
+  veraPDF is not in apt, and without it the PDF/A validation tests skip.
+
+  __INSTALL_PATH__ is replaced with an absolute path by the workflow.
+  Pack selection is by index; the names are the ones the 1.30.x installer
+  reports ("veraPDF GUI", "veraPDF CLI"). The CLI pack provides the `verapdf`
+  executable the tests call.
+-->
+<AutomatedInstallation langpack="eng">
+  <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>
+  <com.izforge.izpack.panels.target.TargetPanel id="install_dir">
+    <installpath>__INSTALL_PATH__</installpath>
+  </com.izforge.izpack.panels.target.TargetPanel>
+  <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">
+    <pack index="0" name="veraPDF GUI" selected="true"/>
+    <pack index="1" name="veraPDF CLI" selected="true"/>
+  </com.izforge.izpack.panels.packs.PacksPanel>
+  <com.izforge.izpack.panels.install.InstallPanel id="install"/>
+  <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>
+</AutomatedInstallation>

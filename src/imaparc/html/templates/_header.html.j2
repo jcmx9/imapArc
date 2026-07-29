@@ -1,0 +1,8 @@
+<div class="m2p-header">
+{% if headers.from_ %}<div class="row"><span class="label">Von:</span> {{ headers.from_ }}</div>{% endif %}
+{% if headers.to %}<div class="row"><span class="label">An:</span> {{ headers.to }}</div>{% endif %}
+{% if headers.cc %}<div class="row"><span class="label">CC:</span> {{ headers.cc }}</div>{% endif %}
+{% if show_bcc and headers.bcc %}<div class="row"><span class="label">BCC:</span> {{ headers.bcc }}</div>{% endif %}
+{% if date_str %}<div class="row"><span class="label">Datum:</span> {{ date_str }}</div>{% endif %}
+{% if headers.subject %}<div class="row"><span class="label">Betreff:</span> {{ headers.subject }}</div>{% endif %}
+</div>
