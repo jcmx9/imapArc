@@ -1,0 +1,74 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+> The directory, project, package and CLI are all **imapArc** / `imaparc`. The GitHub remote is `jcmx9/imapArc`. General Python conventions (CalVer, ruff, mypy --strict, commit style, README parity) are inherited from the workspace-level `CLAUDE.md` — this file covers only what is specific to imapArc.
+
+## Commands
+
+```bash
+uv sync                                   # install deps + dev group
+uv run pytest                             # full suite (has -n auto + coverage gate ≥80%)
+uv run pytest tests/test_x.py::test_y -o addopts=""   # ONE test — clears -n/--cov so the
+                                          # coverage gate doesn't fail on a partial run
+uv run ruff check --fix . && uv run ruff format .
+uv run mypy src/
+```
+
+- **Rendering tests** need Chromium (`uv run --project . playwright install chromium`) and `gs`/`qpdf`/`verapdf` on PATH. They are marked `requires_chromium` / `requires_tools` and auto-skip (see `tests/conftest.py`) when absent.
+- **IMAP tests** (`test_imap.py`, GreenMail parts of `test_fetch.py`) need a local GreenMail server; they skip if `localhost:3143` is closed:
+  ```bash
+  docker run -d -p 3025:3025 -p 3143:3143 \
+    -e GREENMAIL_OPTS='-Dgreenmail.setup.test.all -Dgreenmail.auth.disabled' \
+    greenmail/standalone:2.1.0
+  ```
+- **Test helpers**: `pythonpath = ["."]` in `pyproject.toml` makes `tests/mail_builder.py` (constructs MIME messages for fixtures) importable as `tests.mail_builder`; sample mails live in `tests/fixtures/eml/`. `asyncio_mode = "auto"` — async tests need no `@pytest.mark.asyncio`.
+- **Release**: `bump-my-version bump micro` (edits `src/imaparc/__init__.py` **and** the version line in both `README.md` and `README.en.md`, commits, tags `vX`). `scripts/release.sh` pushes; pushing the `v*` tag triggers `release.yml`, which builds the distribution and creates the GitHub release (`.devN` tags → marked pre-release). **No PyPI publish** — imapArc is installed straight from the repository with `uv tool install git+https://github.com/jcmx9/imapArc.git`. After release, `git branch -f main dev` and push `dev`, `main`, the tag.
+- **Local reinstall of the CLI** while iterating: `uv tool install --force .` (or `git+ssh://git@github.com/jcmx9/imapArc.git`).
+
+## Architecture
+
+imapArc has **two decoupled phases** plus an `all` command that runs both, all driven by one `profile.yaml`. Everything downstream of a source is blind to whether a mail came from IMAP or disk (`RawMail` in `sources/base.py`): fetch feeds it from `sources/imap.py`, render from `sources/eml.py`, which reads the `output/eml/` directory the fetch phase wrote — that directory *is* the interface between the two phases.
+
+### CLI (`cli.py`) — subcommands, one option model
+- `imaparc` (no subcommand) → **help** (`no_args_is_help=True`; the `@app.callback` holds only `--version`). Click exits 2 in this case.
+- `imaparc all` (`run_all`) → the **full pipeline**: `_do_fetch` then `_do_render(respect_pdf=True)` over all profiles.
+- `imaparc fetch` → `_do_fetch` only. `imaparc render` → `_do_render(respect_pdf=False)` (renders **every** profile, ignoring the `pdf` flag).
+- `imaparc init` → `bootstrap.py` writes `~/.config/imaparc/{.env,profile.yaml}`. `imaparc add-profile <name>` appends one `bootstrap.profile_block`. `imaparc list-profiles` prints a rich `Table` of the parsed profiles (`_match_summary`/`_after_summary`). `imaparc sync-profiles` rewrites `profile.yaml` via `bootstrap.render_profiles_file` (values kept active, unset options commented; backs up first, restores on a parse failure). `imaparc reset` clears the delivery state.
+- Shared `_Xxx Opt` annotations + `_do_fetch`/`_do_render`/`_select_profiles` keep the modes consistent. `--profile <name>` restricts any mode.
+- Config paths default to XDG (`_config_dir()`, `_state_path()`), resolved **at import** — tests must pass explicit `--env`/`--profiles` rather than patching `XDG_CONFIG_HOME`.
+- **Verbosity** follows the project's 4-level scheme (`-Q` / default / `-v` / `-vv` → `_verbosity()` → `RunConfig.verbosity`). `logging_setup.setup_logging()` maps it to handlers; a `log_file` receives output **even at `-Q`** (that is what makes silent mode usable for cron). Console output goes through the single shared Rich `Console` in `console.py` — `RichHandler` and the `Progress` bar must share it, or log lines corrupt the live display. Expected third-party chatter (`img2pdf`, `PIL`) is raised to ERROR; `logging.captureWarnings(True)` routes stray warnings through the same path.
+
+### Profile templating (`bootstrap.py`)
+- `render_profile_from_raw(raw)` is the **single source of truth** for a profile's YAML layout: required fields (name, account, output) + folders/pdf active; every other option present but commented with its default. `profile_block` (init/add-profile) feeds it an example dict; `sync-profiles` feeds it each parsed profile so real values stay active. Values are serialised inline with `_kv` (a bare YAML value, not a `{k: v}` mapping — flow style on the whole dict would emit braces).
+
+### Config & matching (`accounts.py`, `profiles.py`, `config.py`)
+- `.env` → `Account` (password is a `SecretStr`). `profile.yaml` → `Profile` (pydantic). `load_profiles(accounts=None)` skips the account-exists check for the render path (no `.env` needed).
+- `Match` rules (all AND across kinds): `domains`/`addresses` (searched in the `mode` header fields: from/to/cc/bcc), `subject` (regex **or** wildcard-pattern list), `attachments` (required file types, checked on the body), `folders`+`recursive`, `since`/`until`. `matches()` is header-only; `attachments_match()` needs the parsed body.
+- `config.py` holds the *runtime* config, distinct from the user-facing profile: `ToolPaths.resolve()` locates `gs`/`qpdf`/`verapdf` **once per run** (missing ones → one `ToolNotFoundError` listing all of them), and `RunConfig` carries verbosity, `jobs`/`gs_jobs`, `allow_remote`, the attachment size/timeout limits and the naming pattern. `default_icc_profile()` picks the first existing sRGB profile from `ICC_CANDIDATES` (macOS, then the usual Linux locations) and is resolved per `RunConfig`, not at import.
+- All errors derive from `ImapArcError` (`exceptions.py`); the CLI catches those for user-facing messages, so new failure modes belong in that hierarchy rather than as bare `RuntimeError`s.
+
+### Fetch (`fetch.py`, `sources/imap.py`, `state.py`)
+- Per folder: `conn.scan()` lists candidates by **ENVELOPE only** (cheap); `matches()` runs on those headers; the full body is pulled via `fetch_body()` **only for a header match** (and once, lazily, when an `attachments` filter needs it — see `_match_candidate`).
+- The state store records **delivered UIDs** (dedup), *not* a high-water mark — so every run re-evaluates all mail against the *current* profiles, and a changed/added profile picks up old mail with no manual reset. Unmatched mail is never marked.
+- On a match: `deliver_eml()` → `state.mark_delivered()` → `_post_fetch()` (label, then move **or** delete — mutually exclusive; a label failure is isolated so it can't block the move/delete). This order means nothing is touched on the server before the local archive is durable. A profile with an `after_fetch` action also re-applies it to an **already-delivered** message still in the folder (a prior move/delete that failed is retried) — but only when the mail's `.eml` exists **now** in `output/eml/` (guards against deleting the sole copy after the path changed); move targets resolve to the server's namespace via NAMESPACE and are subscribed.
+
+### Storage layout & invariants (`sources/deliver.py`, `storage.py`, `pipeline.py`)
+Per profile `output`: `eml/<basename>.eml` always, and (when `pdf: true`) `pdf/<basename>/` — **one folder per mail**. **`<basename>` is shared** across the `.eml` and the PDF folder: `build_base_name()` → `YYYY-MM-DD_hh-mm-ss_PROFILE_SUBJECT` (sanitised: illegal→`_`, whitespace/underscore runs→single `_`). Timestamp = `Date` header, fallback IMAP `INTERNALDATE` (fetch) / eml mtime (render).
+- **Folder contents** (`_store()`): `pdf/<basename>/<basename>.pdf` is the **full** PDF the reader opens (body + attachment pages when attachments exist, else just the body). A mail **with** attachments additionally gets `<basename>_mailonly.pdf` (body only) and the original attachment files in the same folder. No loose PDF ever sits at the `pdf/` root, so a mail's PDF is not duplicated across two locations. Reserved PDF names are written before originals, so a same-named attachment disambiguates rather than clobbering them.
+- **Atomic = complete**: the folder is built under `.staging-<basename>/` and moved in with a single `os.rename` — nothing is written after, so a folder's presence means the mail is fully rendered (no half-written folder to repair). `.imaparc-manifest` in the folder records the mail identity; `_resolve_output()` reads it to tell a re-render of the same mail (skip) from a distinct mail sharing a basename (disambiguate `…-2`, race-free via a shared `claimed` set across concurrent renders).
+- **Invariants**: files `0400` (read-only content), dirs `0700` (private but owner-manageable — you can delete/reorganise without unlocking), atomic write (temp+fsync+rename), **never overwrite** (`disambiguate()` → `…-2`, enforced in code, not by permissions). `writable_dir()` is now effectively a no-op (dirs already 0700) but kept for robustness.
+
+### Render pipeline (`pipeline.py`, `render/`, `html/`, `attachments/`, `pdf/`)
+`render_mail()` builds three body renditions in a headless Chromium `BrowserPool`: **faithful** (`fit_page=True` — the whole mail laid out at a fixed reference width and rendered as **one tall vector page** (a single page, so no internal pagination; the guard's `* { page: auto }` makes named page breaks inert), then scaled aspect-preserving onto one A4 via a pikepdf overlay in `render/pdf_render.py` — stays vector/searchable and small; exotic-CSS layout is best-effort), **reflowed** (full size, Chromium-paginated; `_fit_width` measures the content width — 1:1 when it fits A4 portrait, scaled down if it overflows, and switched to A4 **landscape** if portrait would shrink it below 85%), and **plain-text**. A mail whose HTML is a trivial text wrapper (`html_is_trivial_wrapper`) skips the two HTML renditions entirely. Page margins are 20 mm (25 mm left) via `Rendition.margin_mm`/`left_mm`. It then appends attachment pages (PDF 1:1 via qpdf, images via img2pdf, txt/md typeset) or an info page for unconvertible/Office types (kept as originals, never converted), then merges → PDF/A-3b via Ghostscript, validated with veraPDF. HTML is made self-contained first (`html/inline.py`): `cid:` → `data:`, remote resources stripped (tracking-pixel removal), scripts/handlers removed. Remote images are **opt-in** (`--allow-remote-images`). A four-layer network lockdown in `render/browser.py` blocks all fetches by default.
+- **Concurrency**: one `BrowserPool` (one Chromium process) per run, shared across mails; `_run_render` gathers the per-mail coroutines behind an `asyncio.Semaphore(config.jobs)`. `jobs` comes from the profile and is overridden by `--jobs/-j`; `gs_jobs` separately caps the Ghostscript subprocesses, which are the memory-hungry step.
+- **Reporting** (`report.py`): `RunReport` accumulates `RenderResult`s and veraPDF findings. A non-compliant *combined* PDF is tolerated (an exotic attachment can resist conversion), but a non-compliant `_mailonly.pdf` is imapArc's **own** output and is flagged as an anomaly — treat that as a real bug, not noise.
+
+## Repo layout notes
+- `docs/superpowers/specs/2026-07-27-imaparc-redesign-design.md` is the design spec behind the current two-phase architecture.
+- `profile.example.yaml` is the documented full profile reference; `bootstrap.py` generates config independently, so a new profile option must be reflected in **both**.
+
+## Gotchas
+- `render` needs no `.env`; `fetch` does.
+- Single-test runs must pass `-o addopts=""` or the `fail_under=80` coverage gate fails.
+- `mypy --strict` is enforced; only `img2pdf`, `pillow_heif` and `imapclient` are exempted via `ignore_missing_imports` — a new untyped dependency needs an explicit override with a reason.

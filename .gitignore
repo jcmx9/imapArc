@@ -34,3 +34,8 @@ Thumbs.db
 *.pem
 
 # uv – commit uv.lock for applications
+
+# Tracked on purpose here, overriding a broader global ignore rule:
+# the lockfile belongs to an application, and CLAUDE.md is project documentation.
+!uv.lock
+!CLAUDE.md
