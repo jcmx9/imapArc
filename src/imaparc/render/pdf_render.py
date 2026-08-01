@@ -53,6 +53,10 @@ _MAX_FAITHFUL_PX = 14000
 
 _PT_PER_MM = 72.0 / 25.4
 
+# Annotation flag bit 3 (value 4) = Print. PDF/A requires annotations to be
+# printable and neither Hidden nor NoView, so carried-over links set exactly this.
+_ANNOT_FLAG_PRINT = 4
+
 # Injected into every document: forbids anything but in-memory resources and
 # stops a huge inline image from blowing up the layout. It also neutralises the
 # mail's own paged-media CSS: Outlook/Word mail wraps the body in
@@ -264,11 +268,65 @@ async def _render_fit_page(page: object, margin_mm: float, left_mm: float) -> by
     return _place_on_a4(tall, margin_mm, left_mm)
 
 
+def _carry_over_links(
+    out: pikepdf.Pdf,
+    dst: pikepdf.Page,
+    src: pikepdf.Pdf,
+    source: pikepdf.Page,
+    box: pikepdf.Rectangle,
+) -> None:
+    """Re-attach the source page's link annotations, moved onto the scaled art.
+
+    :meth:`~pikepdf.Page.add_overlay` embeds the source page as a form XObject,
+    which carries the *content stream* only. Link annotations are not content —
+    they hang off the page's ``/Annots`` array — so without this the one-page
+    overview would look perfect and have every link dead. That page is page 1 of
+    the PDF, so it is exactly the one a reader clicks in.
+
+    The rectangles are mapped with the same aspect-preserving, centred fit that
+    ``add_overlay`` applies, so a link keeps sitting on its own text.
+    """
+    links = [
+        annot
+        for annot in list(source.get("/Annots", []))
+        if annot.get("/Subtype") == pikepdf.Name.Link
+    ]
+    if not links:
+        return  # leave the page without an /Annots array at all
+
+    src_box = source.trimbox
+    src_x, src_y = float(src_box[0]), float(src_box[1])
+    src_w = max(float(src_box[2]) - src_x, 1e-9)
+    src_h = max(float(src_box[3]) - src_y, 1e-9)
+    scale = min(box.width / src_w, box.height / src_h)
+    dx = box.llx + (box.width - src_w * scale) / 2
+    dy = box.lly + (box.height - src_h * scale) / 2
+
+    moved = []
+    for annot in links:
+        x0, y0, x1, y1 = (float(v) for v in annot.Rect)
+        # copy_foreign needs an indirect handle; an annotation may sit directly
+        # in the /Annots array. make_indirect returns an already-indirect object
+        # unchanged, so this is safe either way.
+        copied = out.copy_foreign(src.make_indirect(annot))
+        copied.Rect = [
+            (x0 - src_x) * scale + dx,
+            (y0 - src_y) * scale + dy,
+            (x1 - src_x) * scale + dx,
+            (y1 - src_y) * scale + dy,
+        ]
+        # PDF/A requires annotations to be printable and not hidden.
+        copied.F = _ANNOT_FLAG_PRINT
+        moved.append(copied)
+    dst.Annots = out.make_indirect(moved)
+
+
 def _place_on_a4(pdf_bytes: bytes, margin_mm: float, left_mm: float) -> bytes:
     """Scale a single-page PDF onto one A4 page, aspect-preserving and centred.
 
     Uses a wider left margin (``left_mm``) than the other three, matching the
-    reflowed rendition's letter-style page.
+    reflowed rendition's letter-style page. Link annotations are carried across
+    separately — see :func:`_carry_over_links`.
     """
     m = margin_mm * _PT_PER_MM
     left = left_mm * _PT_PER_MM
@@ -276,7 +334,10 @@ def _place_on_a4(pdf_bytes: bytes, margin_mm: float, left_mm: float) -> bytes:
     with pikepdf.open(io.BytesIO(pdf_bytes)) as src:
         out = pikepdf.Pdf.new()
         dst = out.add_blank_page(page_size=(w_pt, h_pt))
-        dst.add_overlay(src.pages[0], pikepdf.Rectangle(left, m, w_pt - m, h_pt - m))
+        box = pikepdf.Rectangle(left, m, w_pt - m, h_pt - m)
+        source = src.pages[0]
+        dst.add_overlay(source, box)
+        _carry_over_links(out, dst, src, source, box)
         buffer = io.BytesIO()
         out.save(buffer)
         return buffer.getvalue()
