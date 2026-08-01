@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.0] - 2026-08-01
+
 ### Added
 - **`imaparc eml` — render loose `.eml` files without a profile.** Dragging a
   message out of a mail client into the Finder produces an `.eml`; this command
