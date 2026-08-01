@@ -21,6 +21,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   factory into `console.py`, so the new command shares them instead of duplicating
   them. No behaviour change.
 
+### Fixed
+- **`release.sh prod --new-month` skipped the `.0` release.** It ran `bump month`
+  *and* then `bump micro`; since a month bump already resets micro to zero, the
+  first release of a new month came out as `26.8.1` and `26.8.0` was never
+  published. The two are now alternatives. The month bump also ran before
+  `git checkout dev`, so it could rewrite the version on whatever branch happened
+  to be checked out — it now runs after the checkout and pull.
+
 ## [26.7.46] - 2026-07-29
 
 First public release. Everything below this entry was developed in a private
