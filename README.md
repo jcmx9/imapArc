@@ -151,6 +151,7 @@ imaparc add-profile NAME # ein neues, voll dokumentiertes Profil an profile.yaml
 imaparc list-profiles    # definierte Profile als Tabelle anzeigen (Regeln, Ziel, Aktion)
 imaparc sync-profiles    # bestehende profile.yaml ins Vollformat überführen (Backup)
 imaparc reset            # Zustell-Status löschen → nächster fetch verarbeitet alles neu
+imaparc eml              # lose .eml-Dateien rendern, ganz ohne Profil
 
 imaparc all --profile hetzner    # jeden Modus auf ein Profil einschränken
 imaparc fetch --profile hetzner
@@ -161,6 +162,31 @@ imaparc --help           # (auch: imaparc ohne Argument)
 ```
 
 `imaparc render` braucht kein `.env` (kein IMAP-Zugriff). Jeder `fetch`-Lauf bewertet alle Mails der konfigurierten Ordner neu gegen die **aktuellen** Profile; bereits zugestellte werden übersprungen. Änderst du ein Profil oder fügst eins hinzu, greift es automatisch auf alte Mails — kein State-Zurücksetzen nötig. Ein zweiter `render`-Lauf überspringt bereits erzeugte Mails.
+
+### Einzelne Mails ohne Profil: `imaparc eml`
+
+Zieht man eine Mail aus Apple Mail, Thunderbird oder Outlook in den Finder, entsteht eine `.eml`-Datei. `imaparc eml` rendert solche Dateien dort, wo sie liegen — ohne Profil, ohne `.env`, ohne Serverkontakt:
+
+```bash
+imaparc eml                        # alle .eml im aktuellen Verzeichnis
+imaparc eml ~/Desktop              # alle .eml dort
+imaparc eml a.eml b.eml            # genau diese beiden
+imaparc eml --name hetzner *.eml   # eigener Namensteil statt "mail"
+```
+
+Aus jeder `.eml` wird ein Ordner daneben, der die Mail vollständig enthält — und die `.eml` wandert anschließend hinein:
+
+```
+2026-07-01_10-30-00_mail_Rechnung_Juli_2026/
+├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026.pdf           # Mail + Anhangseiten
+├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026_mailonly.pdf  # nur die Mail
+├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026.eml           # das Original
+└── rechnung.pdf                                              # Anhang im Original
+```
+
+Ein Verzeichnisargument nimmt nur die `.eml` **direkt darin**, nicht in Unterordnern — die bereits einsortierten Mails werden also nie erneut eingesammelt. Ein zweiter Lauf ist damit folgenlos, und ein zwischendrin abgebrochener Lauf repariert sich beim nächsten Aufruf von selbst.
+
+Dieser Befehl arbeitet vollständig getrennt vom Archiv: er liest keine `profile.yaml`, kontaktiert keinen Server und schreibt nichts in die Zustell-Datenbank. Ein späteres `imaparc fetch` verhält sich exakt so, als hätte es ihn nie gegeben.
 
 ## Optionen
 
@@ -186,7 +212,11 @@ imaparc --help           # (auch: imaparc ohne Argument)
 | `render` | `--profile <name>` | Nur dieses Profil rendern |
 | `render` | `--allow-remote-images` | Externe Bilder erzwingen (sonst pro Profil `remote_images`) |
 | `render` | `--jobs`, `-j` | Parallele Renderings |
-| `all` / `fetch` / `render` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
+| `eml` | `[PFADE...]` | Dateien oder Verzeichnisse (Default: aktuelles Verzeichnis) |
+| `eml` | `--name`, `-n` | Namensteil in den erzeugten Dateinamen (Default `mail`) |
+| `eml` | `--allow-remote-images` | Externe Bilder beim Rendern laden |
+| `eml` | `--jobs`, `-j` | Parallele Renderings |
+| `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 
 ## Entwicklung
 

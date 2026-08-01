@@ -150,6 +150,7 @@ imaparc add-profile NAME # append a new, fully documented profile to profile.yam
 imaparc list-profiles    # show the defined profiles as a table (rules, target, action)
 imaparc sync-profiles    # rewrite an existing profile.yaml to the full format (backup)
 imaparc reset            # clear delivery state → next fetch re-processes everything
+imaparc eml              # render loose .eml files, with no profile at all
 
 imaparc all --profile hetzner    # restrict any mode to one profile
 imaparc fetch --profile hetzner
@@ -160,6 +161,31 @@ imaparc --help           # (also: imaparc with no argument)
 ```
 
 `imaparc render` needs no `.env` (no IMAP access). Every `fetch` run re-evaluates all mail in the configured folders against the **current** profiles; already-delivered mail is skipped. Change a profile or add one and it takes effect on old mail automatically — no state reset needed. A second `render` run skips already-produced mail.
+
+### Single mails without a profile: `imaparc eml`
+
+Dragging a message out of Apple Mail, Thunderbird or Outlook into the Finder produces an `.eml` file. `imaparc eml` renders such files right where they lie — no profile, no `.env`, no server contact:
+
+```bash
+imaparc eml                        # every .eml in the current directory
+imaparc eml ~/Desktop              # every .eml there
+imaparc eml a.eml b.eml            # exactly these two
+imaparc eml --name hetzner *.eml   # a custom name segment instead of "mail"
+```
+
+Each `.eml` turns into a folder beside it holding the complete mail — and the `.eml` itself is moved in afterwards:
+
+```
+2026-07-01_10-30-00_mail_Rechnung_Juli_2026/
+├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026.pdf           # mail + attachment pages
+├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026_mailonly.pdf  # the mail alone
+├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026.eml           # the original
+└── rechnung.pdf                                              # attachment, untouched
+```
+
+A directory argument takes only the `.eml` files **directly inside it**, not in subfolders — so mails already filed away are never collected again. A second run is therefore a no-op, and a run interrupted midway repairs itself the next time you call it.
+
+This command is fully separate from the archive: it reads no `profile.yaml`, contacts no server and writes nothing to the delivery database. A later `imaparc fetch` behaves exactly as if it had never run.
 
 ## Options
 
@@ -185,7 +211,11 @@ imaparc --help           # (also: imaparc with no argument)
 | `render` | `--profile <name>` | Render only this profile |
 | `render` | `--allow-remote-images` | Force remote images (else per-profile `remote_images`) |
 | `render` | `--jobs`, `-j` | Parallel renders |
-| `all` / `fetch` / `render` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
+| `eml` | `[PATHS...]` | Files or directories (default: current directory) |
+| `eml` | `--name`, `-n` | Name segment in the generated file names (default `mail`) |
+| `eml` | `--allow-remote-images` | Load remote images while rendering |
+| `eml` | `--jobs`, `-j` | Parallel renders |
+| `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 
 ## Development
 

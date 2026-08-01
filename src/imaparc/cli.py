@@ -13,47 +13,29 @@ from typing import Annotated, NoReturn
 import typer
 import yaml
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskID,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
+from rich.progress import Progress, TaskID
 from rich.table import Table
 
 from imaparc import __version__
 from imaparc.accounts import ConfigError, load_accounts
+from imaparc.adhoc import collect_eml, run_adhoc
 from imaparc.bootstrap import init_config, profile_block, render_profiles_file
 from imaparc.config import RunConfig, ToolPaths
-from imaparc.console import console
-from imaparc.exceptions import ImapArcError, ToolNotFoundError
+from imaparc.console import make_progress
+from imaparc.exceptions import ImapArcError, SourceError, ToolNotFoundError
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
 from imaparc.mail.parser import parse_mail
-from imaparc.pdf.validate import (
-    ValidationError,
-    run_verapdf,
-    run_verapdf_batch,
-)
 from imaparc.pipeline import RenderResult, render_mail, sweep_staging
 from imaparc.profiles import Profile, load_profiles
 from imaparc.render.browser import BrowserPool
-from imaparc.report import RunReport
+from imaparc.report import RunReport, validate_pdfa
 from imaparc.sources.base import RawMail
 from imaparc.sources.eml import EmlSource
 from imaparc.state import StateStore
 from imaparc.storage import DIR_MODE, make_dir
 
 logger = logging.getLogger(__name__)
-
-# PDFs validated per veraPDF process. One JVM start per batch; kept well below
-# the OS argument-length limit even with long archive paths.
-_VERAPDF_BATCH = 100
 
 
 def _config_dir() -> Path:
@@ -102,6 +84,14 @@ _RemoteOpt = Annotated[
 _JobsOpt = Annotated[
     int | None,
     typer.Option("--jobs", "-j", min=1, help="Parallel renders; overrides profile."),
+]
+_NameOpt = Annotated[
+    str,
+    typer.Option(
+        "--name",
+        "-n",
+        help="Name segment in the generated file names (the profile's slot).",
+    ),
 ]
 _SilentOpt = Annotated[bool, typer.Option("--silent", "-Q", help="No console output.")]
 _VerboseOpt = Annotated[bool, typer.Option("--verbose", "-v", help="Verbose output.")]
@@ -435,6 +425,64 @@ def render(
 
 
 @app.command()
+def eml(
+    paths: Annotated[
+        list[Path] | None,
+        typer.Argument(
+            help="Files or directories to render. Default: current directory.",
+        ),
+    ] = None,
+    name: _NameOpt = "mail",
+    allow_remote_images: _RemoteOpt = False,
+    jobs: _JobsOpt = None,
+    silent: _SilentOpt = False,
+    verbose: _VerboseOpt = False,
+    debug: _DebugOpt = False,
+) -> None:
+    """Render loose .eml files where they lie, without a profile.
+
+    For a mail dragged out of a mail client: each ``.eml`` becomes a
+    ``<basename>/`` folder next to it, holding the PDFs and the attachments —
+    and the ``.eml`` itself is moved in afterwards.
+
+    A directory argument takes the ``.eml`` files directly inside it, not in
+    subfolders. Needs no ``.env`` and no profile.yaml, never contacts a server
+    and never touches the fetch state.
+    """
+    verbosity = _verbosity(silent, verbose, debug)
+    setup_logging(verbosity)
+    try:
+        files = collect_eml(list(paths or []))
+    except SourceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not files:
+        typer.echo("Nothing to render: no .eml files found.")
+        return
+    try:
+        tools = ToolPaths.resolve()
+    except ToolNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    try:
+        report = asyncio.run(
+            run_adhoc(
+                files,
+                name=name,
+                tools=tools,
+                allow_remote=allow_remote_images,
+                jobs=jobs if jobs is not None else 4,
+                verbosity=verbosity,
+            )
+        )
+    except KeyboardInterrupt:
+        _abort()
+    if verbosity > 0:
+        typer.echo(report.summary())
+
+
+@app.command()
 def fetch(
     env_file: _EnvOpt = DEFAULT_ENV,
     profile_file: _ProfilesOpt = DEFAULT_PROFILES,
@@ -558,24 +606,6 @@ def _received(source_id: str) -> datetime | None:
         return None
 
 
-def _make_progress(*, disable: bool) -> Progress:
-    """A modern render/validation progress display on the shared console."""
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TaskProgressColumn(),
-        TextColumn("•"),
-        TimeElapsedColumn(),
-        TextColumn("•"),
-        TimeRemainingColumn(),
-        console=console,
-        disable=disable,
-        transient=False,
-    )
-
-
 async def _run_render(
     profiles: list[Profile],
     tools: ToolPaths,
@@ -613,7 +643,7 @@ async def _run_render(
         plans.append((profile, config, profile.output / "pdf", mails))
 
     total = sum(len(mails) for *_, mails in plans)
-    with _make_progress(disable=verbosity == 0 or total == 0) as progress:
+    with make_progress(disable=verbosity == 0 or total == 0) as progress:
         task = progress.add_task("Rendering mail", total=total)
         for profile, config, output, mails in plans:
             semaphore = asyncio.Semaphore(config.jobs)
@@ -631,7 +661,7 @@ async def _run_render(
                     progress,
                     task,
                 )
-        _validate_pdfa(report, tools, progress)
+        validate_pdfa(report, tools, progress)
     return report
 
 
@@ -687,37 +717,3 @@ async def _render_profile(
                 logger.error("Unexpected error while rendering a mail: %s", result)
     finally:
         os.chmod(output, DIR_MODE)  # immutable at rest
-
-
-def _validate_pdfa(report: RunReport, tools: ToolPaths, progress: Progress) -> None:
-    """Validate the written PDFs with veraPDF in batches (one JVM per batch).
-
-    Per-file validation starts a fresh JVM each time, which is unusably slow at
-    scale (hundreds of mails → hundreds of JVM starts). Instead each veraPDF
-    process validates a whole chunk of files. Paths are deduplicated first — an
-    attachment-less mail's combined and mail-only PDFs are the same file.
-    """
-    seen: set[Path] = set()
-    paths: list[Path] = []
-    for result in report.written:
-        for pdf in (result.combined_pdf, result.mail_only_pdf):
-            if pdf is not None and pdf not in seen and pdf.exists():
-                seen.add(pdf)
-                paths.append(pdf)
-    if not paths:
-        return
-
-    task = progress.add_task("Validating PDF/A", total=len(paths))
-    for start in range(0, len(paths), _VERAPDF_BATCH):
-        chunk = paths[start : start + _VERAPDF_BATCH]
-        try:
-            results = run_verapdf_batch(tools.verapdf, chunk)
-        except ValidationError as exc:
-            # Batch alignment failed — fall back to per-file for this chunk so a
-            # single odd PDF cannot mislabel its neighbours.
-            logger.warning("veraPDF batch failed (%s); validating individually", exc)
-            results = [run_verapdf(tools.verapdf, pdf) for pdf in chunk]
-        for pdf, res in zip(chunk, results, strict=True):
-            if not res.compliant:
-                report.non_compliant.append(str(pdf))
-        progress.advance(task, len(chunk))

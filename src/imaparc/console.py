@@ -9,5 +9,33 @@ Progress goes to stderr so stdout stays clean for the final summary / piping.
 from __future__ import annotations
 
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 console: Console = Console(stderr=True)
+
+
+def make_progress(*, disable: bool) -> Progress:
+    """A render/validation progress display bound to the shared console."""
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        console=console,
+        disable=disable,
+        transient=False,
+    )

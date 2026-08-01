@@ -5,6 +5,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`imaparc eml` — render loose `.eml` files without a profile.** Dragging a
+  message out of a mail client into the Finder produces an `.eml`; this command
+  renders such files where they lie. Each mail becomes a `<basename>/` folder next
+  to its own `.eml`, and the `.eml` is moved in afterwards. Arguments are files or
+  directories (default: the current directory), `--name` fills the profile slot of
+  the generated names. A directory argument is deliberately **not** scanned
+  recursively, so mails already filed into their folders are never collected twice.
+  The command reads no `profile.yaml`, needs no `.env`, contacts no server and
+  writes nothing to the delivery state — a later `fetch` is entirely unaffected.
+
+### Changed
+- `validate_pdfa()` moved from `cli.py` into `report.py`, and the progress-display
+  factory into `console.py`, so the new command shares them instead of duplicating
+  them. No behaviour change.
+
 ## [26.7.46] - 2026-07-29
 
 First public release. Everything below this entry was developed in a private
