@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **The Finder right-click action failed with "Missing required tool(s): gs, qpdf,
+  verapdf".** A macOS Service is launched by launchd with a bare `PATH`, so
+  `ToolPaths.resolve()` found none of the external tools even though they are
+  installed and a terminal run works. The absolute path to `imaparc` had been
+  handled, but the tools it shells out to had not. Their directories are now
+  resolved at install time and baked into the action, with the usual Homebrew
+  locations appended so a tool installed later is still found. Verified by running
+  the generated command under `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin`.
+
 ## [26.8.3] - 2026-08-01
 
 ### Added
