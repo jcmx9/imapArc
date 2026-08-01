@@ -5,6 +5,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`install.sh` — one-command setup on macOS.** Installs uv, Ghostscript, qpdf,
+  veraPDF, imapArc and the Chromium build it renders with, skipping whatever is
+  already present, then creates the config and the Finder action. veraPDF is not
+  in Homebrew core, so it falls back to the official IzPack installer driven by a
+  generated auto-install profile — the same approach CI uses. `--no-service` and
+  `--no-init` opt out of the last two steps.
+- **`imaparc install-service` — Finder right-click action.** Writes an Automator
+  Quick Action to `~/Library/Services`, after which right-clicking `.eml` files
+  *or* whole folders offers "Mit imapArc archivieren". It registers for
+  `public.item`, so a mixed selection of files and folders is accepted, and passes
+  the whole selection as arguments — which `collect_eml` already handles. The
+  bundle is generated from `plistlib` rather than shipped as a binary blob, so the
+  absolute path to `imaparc` is baked in at install time; a Service does not
+  inherit `PATH`, so a bare command name would never resolve.
+
 ## [26.8.2] - 2026-08-01
 
 ### Fixed

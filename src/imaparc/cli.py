@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -30,6 +31,7 @@ from imaparc.pipeline import RenderResult, render_mail, sweep_staging
 from imaparc.profiles import Profile, load_profiles
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
+from imaparc.service import SERVICES_DIR, install_quick_action
 from imaparc.sources.base import RawMail
 from imaparc.sources.eml import EmlSource
 from imaparc.state import StateStore
@@ -482,6 +484,38 @@ def eml(
         _abort()
     if verbosity > 0:
         typer.echo(report.summary())
+
+
+@app.command(name="install-service")
+def install_service(
+    name: _NameOpt = "mail",
+) -> None:
+    """Add a macOS right-click action (Finder → Services) for .eml files.
+
+    Afterwards, selecting one or more ``.eml`` files — or whole folders — and
+    right-clicking offers an entry that archives them on the spot, exactly as
+    ``imaparc eml`` would.
+    """
+    executable = shutil.which("imaparc")
+    if executable is None:
+        typer.echo(
+            "Error: 'imaparc' was not found on PATH. Install it first "
+            "(uv tool install …) or run 'uv tool update-shell'.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    try:
+        bundle = install_quick_action(
+            SERVICES_DIR, executable=Path(executable), name=name
+        )
+    except (ImapArcError, OSError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Installed {bundle}")
+    typer.echo(
+        "Rechtsklick auf .eml-Dateien oder Ordner im Finder → Dienste → "
+        f"„{bundle.stem}“."
+    )
 
 
 @app.command()
