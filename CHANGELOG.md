@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **`imaparc eml` now always loads remote images.** The command renders a mail the
+  user picked out by hand and had already opened in a client, so the faithful
+  rendition is what is wanted and any tracking pixel has long since fired. This is
+  the one place in imapArc where remote fetching is on by default; the
+  profile-driven commands keep their opt-in lockdown. The now-meaningless
+  `--allow-remote-images` flag was removed from `eml`. Note the trade-off:
+  rendering fetches tracking pixels, so the sender learns when and from where the
+  mail was processed — use a profile plus `render` if that matters.
+
 ### Fixed
 - **The documented Playwright setup step did not work.** Both READMEs told users to
   run `playwright install chromium` after `uv tool install`, but `uv tool install`

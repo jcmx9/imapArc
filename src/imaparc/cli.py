@@ -433,7 +433,6 @@ def eml(
         ),
     ] = None,
     name: _NameOpt = "mail",
-    allow_remote_images: _RemoteOpt = False,
     jobs: _JobsOpt = None,
     silent: _SilentOpt = False,
     verbose: _VerboseOpt = False,
@@ -446,8 +445,12 @@ def eml(
     and the ``.eml`` itself is moved in afterwards.
 
     A directory argument takes the ``.eml`` files directly inside it, not in
-    subfolders. Needs no ``.env`` and no profile.yaml, never contacts a server
-    and never touches the fetch state.
+    subfolders. Needs no ``.env`` and no profile.yaml, and never touches the
+    fetch state.
+
+    Remote images are always loaded here (unlike the profile-driven commands,
+    where they are opt-in), so the mail renders as the sender laid it out. Note
+    that this fetches tracking pixels too.
     """
     verbosity = _verbosity(silent, verbose, debug)
     setup_logging(verbosity)
@@ -471,7 +474,6 @@ def eml(
                 files,
                 name=name,
                 tools=tools,
-                allow_remote=allow_remote_images,
                 jobs=jobs if jobs is not None else 4,
                 verbosity=verbosity,
             )

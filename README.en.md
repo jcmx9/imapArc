@@ -18,7 +18,7 @@ Guiding principle: **imapArc preserves, it does not alter.** The full raw messag
 - **Two decoupled phases:** `fetch` (IMAP → `.eml`, cheap, idempotent) and `render` (`.eml` → PDF, optional, repeatable).
 - **Readable `.eml` files** sharing the PDF's name; open any one in any mail client.
 - **Real browser rendering** via Chromium — even complex newsletter HTML faithfully, up to three renditions per email (reflowed, plain text, plus a scaled one-page overview for multi-page mail).
-- **No external resource loading** — tracking pixels are stripped before rendering.
+- **No external resource loading** — tracking pixels are stripped before rendering. (Exception: `imaparc eml` loads them on purpose, see there.)
 - **Protective, private archive** — files `0400` (read-only content), directories `0700` (private, yet owner-manageable), **never overwrite** (collision → `…-2`).
 
 ## Prerequisites
@@ -187,7 +187,9 @@ Each `.eml` turns into a folder beside it holding the complete mail — and the 
 
 A directory argument takes only the `.eml` files **directly inside it**, not in subfolders — so mails already filed away are never collected again. A second run is therefore a no-op, and a run interrupted midway repairs itself the next time you call it.
 
-This command is fully separate from the archive: it reads no `profile.yaml`, contacts no server and writes nothing to the delivery database. A later `imaparc fetch` behaves exactly as if it had never run.
+This command is separate from the archive: it reads no `profile.yaml`, contacts no IMAP server and writes nothing to the delivery database. A later `imaparc fetch` behaves exactly as if it had never run.
+
+> **Remote images are always loaded here** — unlike the profile-driven commands, where you have to opt in. A mail you pulled out by hand should look the way its sender laid it out, and it was already open in your mail client anyway. The price: rendering fetches tracking pixels too, so the sender learns when and from which IP the mail was processed. If you would rather avoid that, file the mail into a profile archive and use `imaparc render` instead.
 
 ## Options
 
@@ -215,7 +217,6 @@ This command is fully separate from the archive: it reads no `profile.yaml`, con
 | `render` | `--jobs`, `-j` | Parallel renders |
 | `eml` | `[PATHS...]` | Files or directories (default: current directory) |
 | `eml` | `--name`, `-n` | Name segment in the generated file names (default `mail`) |
-| `eml` | `--allow-remote-images` | Load remote images while rendering |
 | `eml` | `--jobs`, `-j` | Parallel renders |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 

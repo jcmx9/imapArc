@@ -119,7 +119,6 @@ async def run_adhoc(
     *,
     name: str,
     tools: ToolPaths,
-    allow_remote: bool = False,
     jobs: int = 4,
     verbosity: int = 1,
 ) -> RunReport:
@@ -133,11 +132,17 @@ async def run_adhoc(
     its permissions are never touched. Only the per-mail folder that imapArc
     creates gets archive permissions.
 
+    **Remote images are always loaded here**, unlike the archive path where they
+    are opt-in. This command renders a mail the user picked out by hand and
+    already opened in a client, so the faithful rendition is what is wanted and
+    any tracking pixel has long since fired. The trade-off is real and one-way:
+    rendering fetches those URLs, so the sender learns when and from where the
+    mail was processed.
+
     Args:
         files: The ``.eml`` files to render, as returned by :func:`collect_eml`.
         name: Fills the profile slot of the base name.
         tools: Resolved gs/qpdf/verapdf paths.
-        allow_remote: Permit loading remote images while rendering.
         jobs: Mails rendered concurrently.
         verbosity: 0 silences the progress display.
 
@@ -154,9 +159,7 @@ async def run_adhoc(
     for directory in by_directory:
         sweep_staging(directory)
 
-    config = RunConfig(
-        tools=tools, verbosity=verbosity, jobs=jobs, allow_remote=allow_remote
-    )
+    config = RunConfig(tools=tools, verbosity=verbosity, jobs=jobs, allow_remote=True)
     semaphore = asyncio.Semaphore(config.jobs)
 
     with make_progress(disable=verbosity == 0) as progress:
