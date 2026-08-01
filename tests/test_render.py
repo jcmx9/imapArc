@@ -8,14 +8,26 @@ blocked, a cid: image really lands in the PDF, @media print really loses).
 from __future__ import annotations
 
 import base64
+import io
 
+import pikepdf
 import pytest
 
 from imaparc.html.inline import inline_resources
 from imaparc.mail.models import AttachmentPart
 from imaparc.render.browser import BrowserPool, build_launch_args, is_allowed_url
-from imaparc.render.geometry import faithful_rendition, reflowed_rendition
-from imaparc.render.pdf_render import harden_document, render_html_to_pdf
+from imaparc.render.geometry import (
+    A4_HEIGHT_MM,
+    A4_WIDTH_MM,
+    faithful_rendition,
+    reflowed_rendition,
+)
+from imaparc.render.pdf_render import (
+    _PT_PER_MM,
+    _place_on_a4,
+    harden_document,
+    render_html_to_pdf,
+)
 
 # --- pure tests -------------------------------------------------------------
 
@@ -285,3 +297,88 @@ async def test_reflowed_switches_wide_mail_to_landscape() -> None:
 
     assert not is_landscape(narrow_pdf)  # fits A4 portrait → stays portrait
     assert is_landscape(wide_pdf)  # too wide for portrait → A4 landscape
+
+
+# --- link annotations survive the one-page overview ------------------------
+
+
+def _pdf_with_link(
+    *, size: tuple[float, float] = (800.0, 600.0), rect: list[float]
+) -> bytes:
+    """A one-page PDF carrying a single link annotation at ``rect``."""
+    pdf = pikepdf.Pdf.new()
+    page = pdf.add_blank_page(page_size=size)
+    page.Annots = pdf.make_indirect(
+        [
+            pikepdf.Dictionary(
+                Type=pikepdf.Name.Annot,
+                Subtype=pikepdf.Name.Link,
+                Rect=rect,
+                Border=[0, 0, 0],
+                A=pikepdf.Dictionary(
+                    S=pikepdf.Name.URI, URI="https://example.com/target"
+                ),
+            )
+        ]
+    )
+    buffer = io.BytesIO()
+    pdf.save(buffer)
+    return buffer.getvalue()
+
+
+def _links(pdf_bytes: bytes) -> list[tuple[str, list[float]]]:
+    """Every link as ``(uri, rect)``.
+
+    The values are read inside the context: a pikepdf handle is destroyed once
+    the Pdf closes, so returning the objects themselves would hand back corpses.
+    """
+    with pikepdf.open(io.BytesIO(pdf_bytes)) as doc:
+        return [
+            (str(a.A.URI), [float(v) for v in a.Rect])
+            for page in doc.pages
+            for a in list(page.get("/Annots", []))
+            if a.get("/Subtype") == "/Link"
+        ]
+
+
+def test_place_on_a4_keeps_link_annotations() -> None:
+    """The faithful overview is page 1 — a dead link there is the one users hit."""
+    placed = _place_on_a4(_pdf_with_link(rect=[100, 200, 300, 250]), 20.0, 25.0)
+
+    links = _links(placed)
+    assert len(links) == 1
+    assert links[0][0] == "https://example.com/target"
+
+
+def test_place_on_a4_transforms_the_link_rectangle() -> None:
+    """A link must sit on the scaled artwork, not at its original coordinates."""
+    source = (800.0, 600.0)
+    placed = _place_on_a4(
+        _pdf_with_link(size=source, rect=[0, 0, 800, 600]), 20.0, 25.0
+    )
+
+    # Same aspect-fit pikepdf applies: scale to fit, then centre in the box.
+    margin, left = 20.0 * _PT_PER_MM, 25.0 * _PT_PER_MM
+    w_pt, h_pt = A4_WIDTH_MM * _PT_PER_MM, A4_HEIGHT_MM * _PT_PER_MM
+    box_w, box_h = (w_pt - margin) - left, (h_pt - margin) - margin
+    scale = min(box_w / source[0], box_h / source[1])
+    x0 = left + (box_w - source[0] * scale) / 2
+    y0 = margin + (box_h - source[1] * scale) / 2
+
+    rect = _links(placed)[0][1]
+    assert rect == pytest.approx(
+        [x0, y0, x0 + source[0] * scale, y0 + source[1] * scale], abs=0.01
+    )
+
+
+def test_place_on_a4_without_annotations_stays_clean() -> None:
+    """A page with no links must not gain an empty /Annots array."""
+    pdf = pikepdf.Pdf.new()
+    pdf.add_blank_page(page_size=(800, 600))
+    buffer = io.BytesIO()
+    pdf.save(buffer)
+
+    placed = _place_on_a4(buffer.getvalue(), 20.0, 25.0)
+
+    with pikepdf.open(io.BytesIO(placed)) as doc:
+        assert "/Annots" not in doc.pages[0]

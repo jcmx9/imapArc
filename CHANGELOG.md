@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Links on the one-page overview were dead.** The faithful rendition is scaled
+  onto a single A4 page with `pikepdf`'s `add_overlay`, which embeds the source
+  page as a form XObject — that carries the *content stream* only. Link
+  annotations hang off the page's `/Annots` array and were silently dropped, so
+  every link on that page did nothing. Since the overview is **page 1**, it is the
+  page a reader clicks in, which is why this looked like "PDFs have no links at
+  all" even though the reflowed rendition was fine throughout. The annotations are
+  now carried across and their rectangles mapped with the same aspect-preserving,
+  centred fit, so each link stays on its own text. Output remains PDF/A-3b
+  compliant (annotations are flagged Print, as the standard requires).
+
 ## [26.8.1] - 2026-08-01
 
 ### Changed
