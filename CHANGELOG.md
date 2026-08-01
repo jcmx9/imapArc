@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.1] - 2026-08-01
+
 ### Changed
 - **`imaparc eml` now always loads remote images.** The command renders a mail the
   user picked out by hand and had already opened in a client, so the faithful
