@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.3] - 2026-08-01
+
 ### Added
 - **`install.sh` — one-command setup on macOS.** Installs uv, Ghostscript, qpdf,
   veraPDF, imapArc and the Chromium build it renders with, skipping whatever is
