@@ -21,9 +21,10 @@ uv run mypy src/
 - **IMAP tests** (`test_imap.py`, GreenMail parts of `test_fetch.py`) need a local GreenMail server; they skip if `localhost:3143` is closed:
   ```bash
   docker run -d -p 3025:3025 -p 3143:3143 \
-    -e GREENMAIL_OPTS='-Dgreenmail.setup.test.all -Dgreenmail.auth.disabled' \
+    -e GREENMAIL_OPTS='-Dgreenmail.setup.test.all -Dgreenmail.auth.disabled -Dgreenmail.hostname=0.0.0.0' \
     greenmail/standalone:2.1.0
   ```
+  `-Dgreenmail.hostname=0.0.0.0` is **required**, not cosmetic: without it GreenMail binds to `127.0.0.1` inside the container, so the published ports accept connections while nothing answers behind them — which surfaces much later as `SMTPServerDisconnected`, not as a refused connection. CI runs the same image as a service container (see `ci.yml`), so the IMAP tests no longer skip there.
 - **Test helpers**: `pythonpath = ["."]` in `pyproject.toml` makes `tests/mail_builder.py` importable as `tests.mail_builder`. Every fixture mail is *built* by `build_mail()` rather than stored — `tests/fixtures/eml/` exists but is empty, so do not look there for samples. `asyncio_mode = "auto"` — async tests need no `@pytest.mark.asyncio`.
 - **Release**: `bump-my-version bump micro` (edits `src/imaparc/__init__.py` **and** the version line in both `README.md` and `README.en.md`, commits, tags `vX`). `scripts/release.sh dev` bumps `.devN` on `dev`; `scripts/release.sh prod` bumps micro, `prod --new-month` bumps the month instead (**never both** — a month bump already resets micro to 0, so running micro after it would skip `.0`). Pushing the `v*` tag triggers `release.yml`, which builds the distribution and creates the GitHub release (`.devN` tags → marked pre-release). **No PyPI publish** — imapArc is installed straight from the repository with `uv tool install git+https://github.com/jcmx9/imapArc.git`. After release, `git branch -f main dev` and push `dev`, `main`, the tag.
 - **Local reinstall of the CLI** while iterating: `uv tool install --force .` (or `git+ssh://git@github.com/jcmx9/imapArc.git`).

@@ -24,9 +24,13 @@ jobs:
           - 3025:3025
           - 3143:3143
         env:
+          # hostname=0.0.0.0 is not optional: GreenMail otherwise binds to
+          # 127.0.0.1 *inside* the container, so the published ports accept
+          # connections but nothing answers behind them.
           GREENMAIL_OPTS: >-
             -Dgreenmail.setup.test.all
             -Dgreenmail.auth.disabled
+            -Dgreenmail.hostname=0.0.0.0
 
     steps:
       - uses: actions/checkout@v7
