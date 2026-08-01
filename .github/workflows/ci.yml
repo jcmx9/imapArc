@@ -12,6 +12,22 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
+
+    services:
+      # Without this every IMAP test skips itself (conftest gates on port 3143),
+      # leaving the code that moves and deletes mail *on the server* unexercised
+      # in CI — the riskiest part of the tool. Auth is disabled and accounts are
+      # created on demand, which is what the tests rely on.
+      greenmail:
+        image: greenmail/standalone:2.1.0
+        ports:
+          - 3025:3025
+          - 3143:3143
+        env:
+          GREENMAIL_OPTS: >-
+            -Dgreenmail.setup.test.all
+            -Dgreenmail.auth.disabled
+
     steps:
       - uses: actions/checkout@v7
 

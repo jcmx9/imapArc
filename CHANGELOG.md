@@ -5,6 +5,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **CI never ran the IMAP tests.** `test_imap.py` and the GreenMail half of
+  `test_fetch.py` gate themselves on port 3143 and skipped on every CI run, so the
+  code that *moves and deletes mail on the server* — `move()`, `delete()`,
+  `_expunge_uid()`, `_post_fetch()` — went unverified there. Same failure mode as
+  the veraPDF gap fixed in 26.7.46: a silently skipped test group covering the
+  riskiest part of the pipeline. GreenMail now runs as a service container.
+
+### Added
+- Tests for the paths that were only reachable with a live IMAP server or not at
+  all: a failing `move`/`delete` is counted rather than raised (the archive is
+  already durable, so a server error must never abort a run), `\Noselect` and
+  `\NonExistent` mailboxes are excluded from a scan, move targets resolve through
+  the server's NAMESPACE with an INBOX-rooted fallback, a recursive scan skips both
+  the Trash and the profile's own move target, one failing account or one broken
+  message does not abort the rest, and a malformed subject header degrades instead
+  of raising. Coverage of `fetch.py` 70 % → 98 % and of `sources/imap.py`
+  48 % → 96 %, both now above the 95 % the conventions ask of critical modules.
+
 ## [26.8.4] - 2026-08-01
 
 ### Fixed
