@@ -2,7 +2,7 @@
 
 > Archiviert IMAP-Postfächer profilgesteuert als lesbare .eml-Dateien und rendert sie optional zu durchsuchbarem PDF/A.
 
-[Sprache: **Deutsch** | [English](README.en.md)] · Version `26.7.46`
+[Sprache: **Deutsch** | [English](README.en.md)] · Version `26.8.0`
 
 [![CI](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml/badge.svg)](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
