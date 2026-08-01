@@ -57,6 +57,30 @@ jobs:
           "$installer/verapdf-install" /tmp/verapdf-auto-install.xml
           echo "$HOME/verapdf" >> "$GITHUB_PATH"
 
+      - name: Wait for GreenMail
+        # A port check is not enough: Docker's forwarder accepts connections
+        # before GreenMail listens behind it, which surfaces later as
+        # "SMTPServerDisconnected". Speak both protocols instead, and fail
+        # loudly rather than let the IMAP tests silently skip themselves.
+        run: |
+          python3 - <<'PY'
+          import imaplib
+          import smtplib
+          import sys
+          import time
+
+          for attempt in range(60):
+              try:
+                  smtplib.SMTP("localhost", 3025, timeout=2).quit()
+                  imaplib.IMAP4("localhost", 3143).logout()
+              except Exception:  # noqa: BLE001 - any failure means "not yet"
+                  time.sleep(2)
+              else:
+                  print(f"GreenMail ready after {attempt * 2}s")
+                  sys.exit(0)
+          sys.exit("GreenMail never became ready")
+          PY
+
       - name: Install dependencies
         run: uv sync
 
