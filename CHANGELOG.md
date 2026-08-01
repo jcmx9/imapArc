@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.4] - 2026-08-01
+
 ### Fixed
 - **The Finder right-click action failed with "Missing required tool(s): gs, qpdf,
   verapdf".** A macOS Service is launched by launchd with a bare `PATH`, so
