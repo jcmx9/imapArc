@@ -127,3 +127,58 @@ def test_cli_fails_clearly_when_imaparc_is_not_on_path(
 
     assert result.exit_code == 1
     assert "Traceback" not in result.output
+
+
+# --- PATH for the tools (a Service inherits none) ---------------------------
+
+
+def test_bakes_in_the_directories_of_the_external_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finder runs the action with a minimal PATH, so gs/qpdf/verapdf vanish.
+
+    Without this the action dies with "Missing required tool(s): gs, qpdf,
+    verapdf" even though they are installed and work fine in a terminal.
+    """
+    found = {
+        "gs": "/opt/homebrew/bin/gs",
+        "qpdf": "/opt/homebrew/bin/qpdf",
+        "verapdf": "/Users/someone/verapdf/verapdf",
+    }
+    monkeypatch.setattr("imaparc.service.shutil.which", lambda cmd: found.get(cmd))
+
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    command = str(_params(tmp_path)["COMMAND_STRING"])
+    assert "export PATH=" in command
+    assert "/opt/homebrew/bin" in command
+    assert "/Users/someone/verapdf" in command
+    # The inherited PATH still comes last, so a terminal run is unaffected.
+    assert "$PATH" in command
+
+
+def test_falls_back_to_the_usual_homebrew_locations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool missing at install time must not leave the action unusable later."""
+    monkeypatch.setattr("imaparc.service.shutil.which", lambda _cmd: None)
+
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    command = str(_params(tmp_path)["COMMAND_STRING"])
+    assert "/opt/homebrew/bin" in command
+    assert "/usr/local/bin" in command
+
+
+def test_path_entries_are_not_duplicated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "imaparc.service.shutil.which", lambda _cmd: "/opt/homebrew/bin/x"
+    )
+
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    command = str(_params(tmp_path)["COMMAND_STRING"])
+    export_line = next(ln for ln in command.splitlines() if "export PATH=" in ln)
+    assert export_line.count("/opt/homebrew/bin") == 1

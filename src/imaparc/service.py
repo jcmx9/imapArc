@@ -16,9 +16,19 @@ import plistlib
 import shutil
 from pathlib import Path
 
+from imaparc.config import REQUIRED_TOOLS
 from imaparc.exceptions import ImapArcError
 
 SERVICE_NAME = "Mit imapArc archivieren"
+
+# Where gs/qpdf/verapdf usually live, appended in case one of them is not
+# installed yet when the action is created. Without these, a tool added later
+# would still be invisible to the action.
+_FALLBACK_TOOL_DIRS = (
+    "/opt/homebrew/bin",  # Homebrew on Apple silicon
+    "/usr/local/bin",  # Homebrew on Intel
+    str(Path.home() / "verapdf"),  # install.sh's veraPDF fallback location
+)
 
 # A Quick Action lives in the user's Services directory; macOS picks it up from
 # there without any registration step.
@@ -109,14 +119,39 @@ def _document_wflow(command: str) -> dict[str, object]:
     }
 
 
+def _tool_dirs() -> list[str]:
+    """Directories holding gs/qpdf/verapdf, resolved now, plus the usual spots.
+
+    Order is preserved and duplicates dropped, so the resulting PATH stays short
+    and deterministic.
+    """
+    found = [
+        str(Path(path).parent)
+        for tool in REQUIRED_TOOLS
+        if (path := shutil.which(tool)) is not None
+    ]
+    ordered: list[str] = []
+    for directory in [*found, *_FALLBACK_TOOL_DIRS]:
+        if directory not in ordered:
+            ordered.append(directory)
+    return ordered
+
+
 def _command(executable: Path, name: str | None) -> str:
-    """The shell line the action runs, with every selected path appended.
+    """The shell lines the action runs, with every selected path appended.
+
+    Finder launches a Service through launchd with a bare PATH, so the
+    directories of the external tools are baked in here — otherwise
+    ``ToolPaths.resolve()`` finds nothing and the action fails with "Missing
+    required tool(s): gs, qpdf, verapdf" even though a terminal run works.
+    The inherited ``$PATH`` is kept last so nothing is shadowed.
 
     ``"$@"`` forwards the whole Finder selection, which ``collect_eml`` already
     accepts as a mix of files and directories.
     """
     option = f" --name {name}" if name else ""
-    return f'"{executable}" eml{option} "$@"'
+    path_prefix = ":".join(_tool_dirs())
+    return f'export PATH="{path_prefix}:$PATH"\n"{executable}" eml{option} "$@"'
 
 
 def install_quick_action(
