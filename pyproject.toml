@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Archive IMAP mailboxes into Maildir, optionally render to searchable PDF/A."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 authors = [
     { name = "jcmx9", email = "jcmx9@tutamail.com" },
 ]
@@ -19,6 +19,7 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Topic :: Communications :: Email",
     "Topic :: Utilities",

@@ -10,14 +10,17 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:
+      # Report every version's result: with the default fail-fast, one broken
+      # version cancels the others and their outcome is unknown — which is how
+      # a 3.14-only breakage first looked like it also affected 3.13.
+      fail-fast: false
       matrix:
-        # Pinned to 3.12 until imapclient works on 3.13+: Python 3.14 turned
-        # imaplib.IMAP4.file into a read-only property and imapclient assigns to
-        # it while subclassing, so every IMAP operation raises AttributeError
-        # (imapclient issue #618, fix merged but unreleased as of 3.1.0). This
-        # only surfaced once GreenMail ran here — before that the IMAP tests
-        # skipped and the breakage went unnoticed.
-        python-version: ["3.12"]
+        # 3.14 is excluded: it turned imaplib.IMAP4.file into a read-only
+        # property, and imapclient assigns to it while subclassing, so every
+        # IMAP operation raises AttributeError (imapclient issue #618 — fix
+        # merged upstream but unreleased as of 3.1.0). Verified per version
+        # against a live GreenMail: 3.12 ok, 3.13 ok, 3.14 broken.
+        python-version: ["3.12", "3.13"]
 
     services:
       # Without this every IMAP test skips itself (conftest gates on port 3143),
