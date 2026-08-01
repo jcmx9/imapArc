@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.2] - 2026-08-01
+
 ### Fixed
 - **Links on the one-page overview were dead.** The faithful rendition is scaled
   onto a single A4 page with `pikepdf`'s `add_overlay`, which embeds the source
