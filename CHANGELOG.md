@@ -5,6 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **The documented Playwright setup step did not work.** Both READMEs told users to
+  run `playwright install chromium` after `uv tool install`, but `uv tool install`
+  only exposes imapArc's own entry points — not those of its dependencies — so no
+  `playwright` executable exists on `PATH`. Rendering then failed with
+  `Executable doesn't exist`. The install step now goes through the tool
+  environment's interpreter, which also pins the Chromium build to the one the
+  installed imapArc actually expects (the project venv and the tool environment
+  can hold different Playwright versions). The development section likewise needed
+  `uv run` in front.
+
 ## [26.8.0] - 2026-08-01
 
 ### Added

@@ -53,8 +53,10 @@ uv tool update-shell        # trägt ~/.local/bin dauerhaft in die Shell ein
 Für die `render`-Phase zusätzlich einmalig den Browser installieren:
 
 ```bash
-playwright install chromium
+"$(uv tool dir)/imaparc/bin/python" -m playwright install chromium
 ```
+
+Der Umweg über den Interpreter ist nötig, weil `uv tool install` nur die ausführbaren Dateien von imapArc selbst nach `~/.local/bin` legt, nicht die seiner Abhängigkeiten — ein blankes `playwright` gibt es also nicht. Der Pfad stellt außerdem sicher, dass genau die Chromium-Version geladen wird, die das installierte imapArc erwartet.
 
 ## Erste Einrichtung (Bootstrap)
 
@@ -224,7 +226,7 @@ Dieser Befehl arbeitet vollständig getrennt vom Archiv: er liest keine `profile
 git clone https://github.com/jcmx9/imapArc.git
 cd imapArc
 uv sync
-playwright install chromium
+uv run playwright install chromium
 
 uv run pytest
 uv run ruff check --fix . && uv run ruff format .
