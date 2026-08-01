@@ -5,6 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Python support narrowed to 3.12** (`requires-python = ">=3.12,<3.13"`).
+  Python 3.14 turned `imaplib.IMAP4.file` into a read-only property; imapclient
+  assigns to it while subclassing, so on 3.13+ every IMAP operation raises
+  `AttributeError: property 'file' … has no setter`. The fix is merged upstream
+  but unreleased (imapclient is still at 3.1.0), so `imaparc fetch` simply does
+  not work there. Declaring `>=3.12` while shipping that was a promise the tool
+  could not keep — an install on 3.13 now fails cleanly instead of breaking at
+  runtime. This became visible only because the IMAP tests finally run in CI; they
+  had been skipping on all three Python versions.
+
 ### Fixed
 - **CI never ran the IMAP tests.** `test_imap.py` and the GreenMail half of
   `test_fetch.py` gate themselves on port 3143 and skipped on every CI run, so the
