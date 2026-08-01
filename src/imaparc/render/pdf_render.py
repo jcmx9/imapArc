@@ -318,7 +318,7 @@ def _carry_over_links(
         # PDF/A requires annotations to be printable and not hidden.
         copied.F = _ANNOT_FLAG_PRINT
         moved.append(copied)
-    dst.Annots = out.make_indirect(moved)
+    dst.Annots = out.make_indirect(pikepdf.Array(moved))
 
 
 def _place_on_a4(pdf_bytes: bytes, margin_mm: float, left_mm: float) -> bytes:
