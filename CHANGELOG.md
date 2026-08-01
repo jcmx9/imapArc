@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.5] - 2026-08-01
+
 ### Changed
 - **Python 3.14 is no longer claimed** (`requires-python = ">=3.12,<3.14"`).
   Python 3.14 turned `imaplib.IMAP4.file` into a read-only property; imapclient
