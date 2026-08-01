@@ -1,11 +1,22 @@
-"""Summary report for a render run."""
+"""Summary report for a render run, and the PDF/A validation that feeds it."""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich.progress import Progress
+
+from imaparc.config import ToolPaths
+from imaparc.pdf.validate import ValidationError, run_verapdf, run_verapdf_batch
 from imaparc.pipeline import RenderResult
+
+logger = logging.getLogger(__name__)
+
+# PDFs validated per veraPDF process. One JVM start per batch; kept well below
+# the OS argument-length limit even with long archive paths.
+_VERAPDF_BATCH = 100
 
 
 @dataclass
@@ -66,3 +77,37 @@ class RunReport:
                     "(imapArc's own output) — this is an anomaly, please report."
                 )
         return "\n".join(lines)
+
+
+def validate_pdfa(report: RunReport, tools: ToolPaths, progress: Progress) -> None:
+    """Validate the written PDFs with veraPDF in batches (one JVM per batch).
+
+    Per-file validation starts a fresh JVM each time, which is unusably slow at
+    scale (hundreds of mails → hundreds of JVM starts). Instead each veraPDF
+    process validates a whole chunk of files. Paths are deduplicated first — an
+    attachment-less mail's combined and mail-only PDFs are the same file.
+    """
+    seen: set[Path] = set()
+    paths: list[Path] = []
+    for result in report.written:
+        for pdf in (result.combined_pdf, result.mail_only_pdf):
+            if pdf is not None and pdf not in seen and pdf.exists():
+                seen.add(pdf)
+                paths.append(pdf)
+    if not paths:
+        return
+
+    task = progress.add_task("Validating PDF/A", total=len(paths))
+    for start in range(0, len(paths), _VERAPDF_BATCH):
+        chunk = paths[start : start + _VERAPDF_BATCH]
+        try:
+            results = run_verapdf_batch(tools.verapdf, chunk)
+        except ValidationError as exc:
+            # Batch alignment failed — fall back to per-file for this chunk so a
+            # single odd PDF cannot mislabel its neighbours.
+            logger.warning("veraPDF batch failed (%s); validating individually", exc)
+            results = [run_verapdf(tools.verapdf, pdf) for pdf in chunk]
+        for pdf, res in zip(chunk, results, strict=True):
+            if not res.compliant:
+                report.non_compliant.append(str(pdf))
+        progress.advance(task, len(chunk))

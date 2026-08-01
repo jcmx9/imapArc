@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+from rich.progress import Progress
+
+from imaparc.config import ToolPaths
+from imaparc.pdf.validate import ValidationResult
 from imaparc.pipeline import RenderResult
-from imaparc.report import RunReport
+from imaparc.report import RunReport, validate_pdfa
 
 
 def _result(
@@ -90,3 +97,81 @@ def test_non_compliant_combined_only_is_not_an_anomaly() -> None:
     report.non_compliant.append("/archive/pdf/a/a.pdf")
 
     assert "anomaly" not in report.summary()
+
+
+# --- PDF/A validation ------------------------------------------------------
+
+
+def _tools() -> ToolPaths:
+    return ToolPaths(gs=Path("/gs"), qpdf=Path("/qpdf"), verapdf=Path("/verapdf"))
+
+
+def _quiet_progress() -> Progress:
+    return Progress(disable=True)
+
+
+def test_validate_deduplicates_the_two_pdf_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mail without attachments points both fields at the same file."""
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    report = RunReport()
+    report.add(
+        RenderResult(basename="a", written=True, combined_pdf=pdf, mail_only_pdf=pdf)
+    )
+    validated: list[list[Path]] = []
+
+    def _batch(_verapdf: Path, paths: list[Path]) -> list[ValidationResult]:
+        validated.append(list(paths))
+        return [ValidationResult(compliant=True) for _ in paths]
+
+    monkeypatch.setattr("imaparc.report.run_verapdf_batch", _batch)
+    with _quiet_progress() as progress:
+        validate_pdfa(report, _tools(), progress)
+
+    assert validated == [[pdf]]
+    assert report.non_compliant == []
+
+
+def test_validate_records_non_compliant_pdfs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    good = tmp_path / "good.pdf"
+    bad = tmp_path / "bad_mailonly.pdf"
+    for path in (good, bad):
+        path.write_bytes(b"%PDF-1.4")
+    report = RunReport()
+    report.add(
+        RenderResult(basename="a", written=True, combined_pdf=good, mail_only_pdf=bad)
+    )
+
+    def _batch(_verapdf: Path, paths: list[Path]) -> list[ValidationResult]:
+        return [ValidationResult(compliant=p.name == "good.pdf") for p in paths]
+
+    monkeypatch.setattr("imaparc.report.run_verapdf_batch", _batch)
+    with _quiet_progress() as progress:
+        validate_pdfa(report, _tools(), progress)
+
+    assert report.non_compliant == [str(bad)]
+
+
+def test_validate_skips_missing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = RunReport()
+    report.add(
+        RenderResult(basename="a", written=True, combined_pdf=tmp_path / "gone.pdf")
+    )
+    called = False
+
+    def _batch(_verapdf: Path, paths: list[Path]) -> list[ValidationResult]:
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr("imaparc.report.run_verapdf_batch", _batch)
+    with _quiet_progress() as progress:
+        validate_pdfa(report, _tools(), progress)
+
+    assert not called
