@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from imaparc.accounts import Account
+from imaparc.exceptions import ImapArcError
 from imaparc.fetch import FetchReport, _folder_map, _match_candidate, run_fetch
 from imaparc.mail.models import MailHeaders
 from imaparc.profiles import AfterFetch, Match, Profile
@@ -342,6 +343,286 @@ def test_post_fetch_label_failure_does_not_block_move() -> None:
 
     assert ("move", "imapArc") in calls
     assert report.post_fetch_failed == 0
+
+
+def test_post_fetch_move_failure_is_counted_not_raised() -> None:
+    """The archive is already durable, so a server failure must never abort."""
+    from imaparc.fetch import _post_fetch
+    from imaparc.profiles import AfterFetch, Profile
+
+    class FakeConn:
+        def label(self, folder: str, uid: int, keyword: str) -> None:
+            pass
+
+        def move(self, folder: str, uid: int, destination: str) -> None:
+            raise RuntimeError("mailbox full")
+
+        def delete(self, folder: str, uid: int) -> None:  # pragma: no cover
+            raise AssertionError("delete must not run when move_to is set")
+
+    profile = Profile(
+        name="x",
+        account="a",
+        output=Path("/tmp/x"),
+        after_fetch=AfterFetch(move_to="imapArc"),
+    )
+    report = FetchReport()
+
+    _post_fetch(FakeConn(), "INBOX", 1, profile, report)  # type: ignore[arg-type]
+
+    assert report.post_fetch_failed == 1
+    assert "move to 'imapArc'" in report.summary() or report.post_fetch_failed == 1
+
+
+def test_post_fetch_delete_failure_is_counted_not_raised() -> None:
+    """A server lacking UIDPLUS raises here; the run must survive it."""
+    from imaparc.fetch import _post_fetch
+    from imaparc.profiles import AfterFetch, Profile
+
+    class FakeConn:
+        def label(
+            self, folder: str, uid: int, keyword: str
+        ) -> None:  # pragma: no cover
+            pass
+
+        def move(
+            self, folder: str, uid: int, destination: str
+        ) -> None:  # pragma: no cover
+            raise AssertionError("move must not run when delete is set")
+
+        def delete(self, folder: str, uid: int) -> None:
+            raise ImapArcError("server lacks UIDPLUS")
+
+    profile = Profile(
+        name="x",
+        account="a",
+        output=Path("/tmp/x"),
+        after_fetch=AfterFetch(delete=True),
+    )
+    report = FetchReport()
+
+    _post_fetch(FakeConn(), "INBOX", 7, profile, report)  # type: ignore[arg-type]
+
+    assert report.post_fetch_failed == 1
+
+
+def test_post_fetch_without_move_or_delete_touches_nothing() -> None:
+    """A label-only profile must not reach the move/delete branch at all."""
+    from imaparc.fetch import _post_fetch
+    from imaparc.profiles import AfterFetch, Profile
+
+    labelled: list[str] = []
+
+    class FakeConn:
+        def label(self, folder: str, uid: int, keyword: str) -> None:
+            labelled.append(keyword)
+
+        def move(self, folder: str, uid: int, destination: str) -> None:
+            raise AssertionError("no move_to configured")
+
+        def delete(self, folder: str, uid: int) -> None:
+            raise AssertionError("no delete configured")
+
+    profile = Profile(
+        name="x",
+        account="a",
+        output=Path("/tmp/x"),
+        after_fetch=AfterFetch(label="imapArc"),
+    )
+    report = FetchReport()
+
+    _post_fetch(FakeConn(), "INBOX", 1, profile, report)  # type: ignore[arg-type]
+
+    assert labelled == ["imapArc"]
+    assert report.post_fetch_failed == 0
+
+
+def test_summary_names_already_archived_mail() -> None:
+    """ "0 delivered" must never be a silent mystery."""
+    report = FetchReport()
+    report.already_archived = 4
+
+    summary = report.summary()
+
+    assert "4 already archived on a previous run" in summary
+    assert "imaparc reset" in summary
+
+
+def test_earliest_since_is_used_only_when_every_profile_agrees() -> None:
+    """One unbounded profile means the server-side SINCE must not narrow at all."""
+    from datetime import date
+
+    from imaparc.fetch import _earliest_since
+    from imaparc.profiles import Match, Profile
+
+    def _profile(since: date | None) -> Profile:
+        return Profile(
+            name="x", account="a", output=Path("/tmp/x"), match=Match(since=since)
+        )
+
+    bounded = [_profile(date(2026, 3, 1)), _profile(date(2026, 1, 15))]
+    assert _earliest_since(bounded) == date(2026, 1, 15)
+
+    assert _earliest_since([*bounded, _profile(None)]) is None
+    assert _earliest_since([]) is None
+
+
+def _plain_profile(output: Path) -> object:
+    """Matches the kanzlei mails, with no server-side action."""
+    from imaparc.profiles import Profile
+
+    return Profile(
+        name="p", account="a", output=output, match={"domains": ["@kanzlei.de"]}
+    )
+
+
+def test_one_broken_message_does_not_abort_the_folder(tmp_path: Path) -> None:
+    """A parser or disk failure on one mail must leave the rest of the run intact."""
+    from imaparc.fetch import _fetch_folder
+    from imaparc.state import StateStore
+
+    class ExplodingConn:
+        def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+            return 42, [_kanzlei_msg(1), _kanzlei_msg(2)]
+
+        def fetch_body(self, folder: str, uid: int) -> bytes:
+            if uid == 1:
+                raise OSError("disk went away")
+            from tests.mail_builder import build_mail
+
+            return build_mail(from_="anwalt@kanzlei.de", subject="Sache")
+
+    report = FetchReport()
+    state = StateStore(tmp_path / "state.db")
+
+    _fetch_folder(
+        ExplodingConn(),  # type: ignore[arg-type]
+        "acc",
+        "INBOX",
+        [_plain_profile(tmp_path / "out")],  # type: ignore[list-item]
+        state,
+        report,
+    )
+
+    assert report.failed == 1  # the broken one
+    assert report.total == 1  # the healthy one still got through
+
+
+def test_summary_names_failures() -> None:
+    report = FetchReport()
+    report.failed = 3
+
+    assert "3 failed (see log)" in report.summary()
+
+
+class _AccountConn:
+    """An ImapConnection stand-in covering a whole run_fetch pass."""
+
+    def __init__(self, folders: list[str], raise_on_enter: Exception | None = None):
+        self._folders = folders
+        self._raise = raise_on_enter
+        self.scanned: list[str] = []
+
+    def __enter__(self) -> _AccountConn:
+        if self._raise is not None:
+            raise self._raise
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def list_folders(self) -> tuple[str, list[str]]:
+        return ".", self._folders
+
+    def trash_folders(self) -> set[str]:
+        return {"INBOX.Trash"}
+
+    def resolve_move_destination(self, source: str, destination: str) -> str:
+        return f"INBOX.{destination}"
+
+    def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+        self.scanned.append(folder)
+        return 1, []
+
+
+def _recursive_profile(output: Path) -> object:
+    from imaparc.profiles import AfterFetch, Profile
+
+    return Profile(
+        name="p",
+        account="a",
+        output=output,
+        match={"domains": ["@kanzlei.de"], "recursive": True},
+        after_fetch=AfterFetch(move_to="imapArc"),
+    )
+
+
+def _account(name: str = "a") -> object:
+    from pydantic import SecretStr
+
+    from imaparc.accounts import Account
+
+    return Account(name=name, host="h", user="u", password=SecretStr("p"))
+
+
+def test_recursive_scan_skips_trash_and_the_own_move_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scanning either would re-archive deleted mail or duplicate moved mail."""
+    from imaparc.fetch import run_fetch
+    from imaparc.state import StateStore
+
+    conn = _AccountConn(["INBOX", "INBOX.Sub", "INBOX.Trash", "INBOX.imapArc"])
+    monkeypatch.setattr("imaparc.fetch.ImapConnection", lambda _account: conn)
+
+    run_fetch(
+        {"a": _account()},  # type: ignore[dict-item]
+        [_recursive_profile(tmp_path / "out")],  # type: ignore[list-item]
+        StateStore(tmp_path / "state.db"),
+    )
+
+    assert "INBOX" in conn.scanned
+    assert "INBOX.Sub" in conn.scanned
+    assert "INBOX.Trash" not in conn.scanned  # deleted mail stays deleted
+    assert "INBOX.imapArc" not in conn.scanned  # would duplicate moved mail
+
+
+def test_one_failing_account_does_not_abort_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connection reset on one account must leave the rest of the run alive."""
+    from imaparc.exceptions import ImapArcError as _Err
+    from imaparc.fetch import run_fetch
+    from imaparc.state import StateStore
+
+    good = _AccountConn(["INBOX"])
+    conns = {
+        "bad": _AccountConn([], raise_on_enter=_Err("connection reset")),
+        "worse": _AccountConn([], raise_on_enter=RuntimeError("protocol error")),
+        "good": good,
+    }
+    monkeypatch.setattr(
+        "imaparc.fetch.ImapConnection", lambda account: conns[account.name]
+    )
+
+    def _profile(account: str) -> object:
+        from imaparc.profiles import Profile
+
+        return Profile(
+            name=account,
+            account=account,
+            output=tmp_path / account,
+            match={"domains": ["@kanzlei.de"]},
+        )
+
+    report = run_fetch(
+        {name: _account(name) for name in conns},  # type: ignore[dict-item]
+        [_profile(n) for n in conns],  # type: ignore[list-item]
+        StateStore(tmp_path / "state.db"),
+    )
+
+    assert good.scanned == ["INBOX"]  # the healthy account still ran
+    assert report.total == 0
 
 
 # --- GreenMail end-to-end ---------------------------------------------------

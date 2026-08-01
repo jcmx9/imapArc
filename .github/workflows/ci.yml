@@ -10,8 +10,37 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:
+      # Report every version's result: with the default fail-fast, one broken
+      # version cancels the others and their outcome is unknown — which is how
+      # a 3.14-only breakage first looked like it also affected 3.13.
+      fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        # 3.14 is excluded: it turned imaplib.IMAP4.file into a read-only
+        # property, and imapclient assigns to it while subclassing, so every
+        # IMAP operation raises AttributeError (imapclient issue #618 — fix
+        # merged upstream but unreleased as of 3.1.0). Verified per version
+        # against a live GreenMail: 3.12 ok, 3.13 ok, 3.14 broken.
+        python-version: ["3.12", "3.13"]
+
+    services:
+      # Without this every IMAP test skips itself (conftest gates on port 3143),
+      # leaving the code that moves and deletes mail *on the server* unexercised
+      # in CI — the riskiest part of the tool. Auth is disabled and accounts are
+      # created on demand, which is what the tests rely on.
+      greenmail:
+        image: greenmail/standalone:2.1.0
+        ports:
+          - 3025:3025
+          - 3143:3143
+        env:
+          # hostname=0.0.0.0 is not optional: GreenMail otherwise binds to
+          # 127.0.0.1 *inside* the container, so the published ports accept
+          # connections but nothing answers behind them.
+          GREENMAIL_OPTS: >-
+            -Dgreenmail.setup.test.all
+            -Dgreenmail.auth.disabled
+            -Dgreenmail.hostname=0.0.0.0
+
     steps:
       - uses: actions/checkout@v7
 
@@ -40,6 +69,30 @@ jobs:
             > /tmp/verapdf-auto-install.xml
           "$installer/verapdf-install" /tmp/verapdf-auto-install.xml
           echo "$HOME/verapdf" >> "$GITHUB_PATH"
+
+      - name: Wait for GreenMail
+        # A port check is not enough: Docker's forwarder accepts connections
+        # before GreenMail listens behind it, which surfaces later as
+        # "SMTPServerDisconnected". Speak both protocols instead, and fail
+        # loudly rather than let the IMAP tests silently skip themselves.
+        run: |
+          python3 - <<'PY'
+          import imaplib
+          import smtplib
+          import sys
+          import time
+
+          for attempt in range(60):
+              try:
+                  smtplib.SMTP("localhost", 3025, timeout=2).quit()
+                  imaplib.IMAP4("localhost", 3143).logout()
+              except Exception:  # noqa: BLE001 - any failure means "not yet"
+                  time.sleep(2)
+              else:
+                  print(f"GreenMail ready after {attempt * 2}s")
+                  sys.exit(0)
+          sys.exit("GreenMail never became ready")
+          PY
 
       - name: Install dependencies
         run: uv sync
