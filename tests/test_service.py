@@ -1,0 +1,129 @@
+"""Tests for the macOS Quick Action (right-click → Services) installer."""
+
+from __future__ import annotations
+
+import plistlib
+from pathlib import Path
+
+import pytest
+
+from imaparc.exceptions import ImapArcError
+from imaparc.service import SERVICE_NAME, install_quick_action
+
+
+def _bundle(services_dir: Path) -> Path:
+    return services_dir / f"{SERVICE_NAME}.workflow"
+
+
+def _wflow(services_dir: Path) -> dict[str, object]:
+    path = _bundle(services_dir) / "Contents" / "document.wflow"
+    return plistlib.loads(path.read_bytes())
+
+
+def _info(services_dir: Path) -> dict[str, object]:
+    path = _bundle(services_dir) / "Contents" / "Info.plist"
+    return plistlib.loads(path.read_bytes())
+
+
+def _params(services_dir: Path) -> dict[str, object]:
+    actions = _wflow(services_dir)["actions"]
+    assert isinstance(actions, list)
+    return dict(actions[0]["action"]["ActionParameters"])
+
+
+def test_creates_the_bundle_structure(tmp_path: Path) -> None:
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    contents = _bundle(tmp_path) / "Contents"
+    assert (contents / "Info.plist").is_file()
+    assert (contents / "document.wflow").is_file()
+
+
+def test_runs_the_given_executable_with_all_arguments(tmp_path: Path) -> None:
+    """Finder passes every selected file or folder; all of them must arrive."""
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    command = _params(tmp_path)["COMMAND_STRING"]
+    assert isinstance(command, str)
+    assert '"/opt/bin/imaparc"' in command
+    assert " eml " in command
+    assert '"$@"' in command
+
+
+def test_passes_input_as_arguments_not_stdin(tmp_path: Path) -> None:
+    """inputMethod 1 = 'as arguments'; 0 would pipe the paths to stdin instead."""
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    assert _params(tmp_path)["inputMethod"] == 1
+
+
+def test_registers_as_a_finder_service_for_files_and_folders(tmp_path: Path) -> None:
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    services = _info(tmp_path)["NSServices"]
+    assert isinstance(services, list)
+    entry = services[0]
+    assert entry["NSMessage"] == "runWorkflowAsService"
+    assert entry["NSMenuItem"]["default"] == SERVICE_NAME
+    # public.item covers both files and directories, so a mixed selection works.
+    assert entry["NSSendFileTypes"] == ["public.item"]
+    assert entry["NSRequiredContext"]["NSApplicationIdentifier"] == "com.apple.finder"
+
+
+def test_absolute_executable_path_is_required(tmp_path: Path) -> None:
+    """Services do not inherit PATH — a bare name would never resolve."""
+    with pytest.raises(ImapArcError, match="absolute"):
+        install_quick_action(tmp_path, executable=Path("imaparc"))
+
+
+def test_reinstall_replaces_a_previous_version(tmp_path: Path) -> None:
+    install_quick_action(tmp_path, executable=Path("/old/imaparc"))
+    stale = _bundle(tmp_path) / "Contents" / "leftover.txt"
+    stale.write_text("from an older install", encoding="utf-8")
+
+    install_quick_action(tmp_path, executable=Path("/new/imaparc"))
+
+    assert '"/new/imaparc"' in str(_params(tmp_path)["COMMAND_STRING"])
+    assert not stale.exists()
+
+
+def test_name_option_is_passed_through(tmp_path: Path) -> None:
+    install_quick_action(tmp_path, executable=Path("/opt/bin/imaparc"), name="hetzner")
+
+    assert "--name hetzner" in str(_params(tmp_path)["COMMAND_STRING"])
+
+
+# --- CLI ------------------------------------------------------------------
+
+
+def test_cli_installs_and_reports_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from imaparc.cli import app
+
+    monkeypatch.setattr("imaparc.cli.SERVICES_DIR", tmp_path)
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/opt/bin/imaparc")
+
+    result = CliRunner().invoke(app, ["install-service"])
+
+    assert result.exit_code == 0
+    assert _bundle(tmp_path).is_dir()
+    assert "Rechtsklick" in result.output or "right-click" in result.output.lower()
+
+
+def test_cli_fails_clearly_when_imaparc_is_not_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from imaparc.cli import app
+
+    monkeypatch.setattr("imaparc.cli.SERVICES_DIR", tmp_path)
+    monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+    result = CliRunner().invoke(app, ["install-service"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output

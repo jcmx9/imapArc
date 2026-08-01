@@ -30,6 +30,22 @@ Guiding principle: **imapArc preserves, it does not alter.** The full raw messag
 
 ## Installation
 
+**The easy way (macOS):** one command installs everything — uv, Ghostscript, qpdf, veraPDF, imapArc, Chromium — and sets up the Finder right-click action:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jcmx9/imapArc/main/install.sh | bash
+```
+
+Anything already present is skipped, nothing is installed twice. Options: `--no-service` (skip the right-click entry), `--no-init` (skip creating the config).
+
+Afterwards the Finder offers **right-click → Services → "Mit imapArc archivieren"**, which works on selected `.eml` files *and* on whole folders — several at once. To add or refresh it later:
+
+```bash
+imaparc install-service
+```
+
+### Manual installation
+
 From the local Git repository as a standalone uv tool:
 
 ```bash
@@ -153,6 +169,7 @@ imaparc list-profiles    # show the defined profiles as a table (rules, target, 
 imaparc sync-profiles    # rewrite an existing profile.yaml to the full format (backup)
 imaparc reset            # clear delivery state → next fetch re-processes everything
 imaparc eml              # render loose .eml files, with no profile at all
+imaparc install-service  # add the Finder right-click action
 
 imaparc all --profile hetzner    # restrict any mode to one profile
 imaparc fetch --profile hetzner
@@ -218,6 +235,7 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 | `eml` | `[PATHS...]` | Files or directories (default: current directory) |
 | `eml` | `--name`, `-n` | Name segment in the generated file names (default `mail`) |
 | `eml` | `--jobs`, `-j` | Parallel renders |
+| `install-service` | `--name`, `-n` | Name segment the right-click entry uses |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 
 ## Development
