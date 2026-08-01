@@ -23,15 +23,20 @@ main() {
             git push origin dev --follow-tags
             ;;
         prod)
-            if [[ "${2:-}" == "--new-month" ]]; then
-                bump-my-version bump month
-            fi
             git checkout dev
             git pull origin dev
-            bump-my-version bump micro
+            # month and micro are alternatives, never both: bumping the month
+            # already resets micro to 0, so running micro afterwards would
+            # publish 26.8.1 and silently skip 26.8.0 entirely.
+            if [[ "${2:-}" == "--new-month" ]]; then
+                bump-my-version bump month
+            else
+                bump-my-version bump micro
+            fi
             git push origin dev --follow-tags
             echo "Tag pushed — the release workflow builds it and creates the"
-            echo "GitHub release. Remaining manual step: open a PR dev -> main."
+            echo "GitHub release. Remaining: fast-forward main to dev and push"
+            echo "  git branch -f main dev && git push origin main"
             ;;
         *)
             usage
