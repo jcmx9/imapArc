@@ -5,6 +5,8 @@ from __future__ import annotations
 import errno
 import os
 import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -269,3 +271,59 @@ async def test_an_unreadable_mail_does_not_abort_the_run(tmp_path: Path) -> None
     assert [r.basename for r in report.written if "Good_One" in r.basename]
     assert not good.exists()
     assert unreadable.exists()  # left untouched, nothing was moved
+
+
+# 1x1 transparent PNG, served to the browser in the remote-image test.
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000a49444154789c6300010000050001"
+    "0d0a2db40000000049454e44ae426082"
+)
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_remote_images_are_always_loaded(tmp_path: Path) -> None:
+    """`eml` renders what the sender intended, so remote images are fetched.
+
+    Would fail if run_adhoc built its RunConfig with allow_remote=False: the
+    browser's network lockdown blocks the request and nothing reaches the server.
+    """
+    requested: list[str] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requested.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(_PNG)))
+            self.end_headers()
+            self.wfile.write(_PNG)
+
+        def log_message(self, *args: object) -> None:
+            pass  # keep the test output clean
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        mail = tmp_path / "remote.eml"
+        mail.write_bytes(
+            build_mail(
+                subject="Remote Image",
+                html=(
+                    "<html><body><p>hi</p>"
+                    f'<img src="http://127.0.0.1:{port}/pixel.png">'
+                    "</body></html>"
+                ),
+            )
+        )
+        await run_adhoc([mail], name="mail", tools=ToolPaths.resolve())
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    assert "/pixel.png" in requested

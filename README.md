@@ -18,7 +18,7 @@ Leitprinzip: **imapArc bewahrt, es verändert nicht.** Die vollständige Rohmail
 - **Zwei entkoppelte Phasen:** `fetch` (IMAP → `.eml`, billig, idempotent) und `render` (`.eml` → PDF, optional, wiederholbar).
 - **Lesbare `.eml`-Dateien** mit demselben Namen wie das PDF; in jedem Mailprogramm einzeln zu öffnen.
 - **Echtes Browser-Rendering** über Chromium — auch komplexes Newsletter-HTML originalgetreu, bis zu drei Fassungen je Mail (umgebrochen, Nur-Text sowie eine skalierte Ein-Seiten-Übersicht bei mehrseitigen Mails).
-- **Kein Nachladen externer Ressourcen** — Tracking-Pixel werden vor dem Rendern entfernt.
+- **Kein Nachladen externer Ressourcen** — Tracking-Pixel werden vor dem Rendern entfernt. (Ausnahme: `imaparc eml` lädt sie bewusst, siehe dort.)
 - **Schützendes, privates Archiv** — Dateien `0400` (read-only Inhalt), Verzeichnisse `0700` (privat, aber vom Besitzer verwaltbar), **nie überschreiben** (Kollision → `…-2`).
 
 ## Voraussetzungen
@@ -188,7 +188,9 @@ Aus jeder `.eml` wird ein Ordner daneben, der die Mail vollständig enthält —
 
 Ein Verzeichnisargument nimmt nur die `.eml` **direkt darin**, nicht in Unterordnern — die bereits einsortierten Mails werden also nie erneut eingesammelt. Ein zweiter Lauf ist damit folgenlos, und ein zwischendrin abgebrochener Lauf repariert sich beim nächsten Aufruf von selbst.
 
-Dieser Befehl arbeitet vollständig getrennt vom Archiv: er liest keine `profile.yaml`, kontaktiert keinen Server und schreibt nichts in die Zustell-Datenbank. Ein späteres `imaparc fetch` verhält sich exakt so, als hätte es ihn nie gegeben.
+Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, kontaktiert keinen IMAP-Server und schreibt nichts in die Zustell-Datenbank. Ein späteres `imaparc fetch` verhält sich exakt so, als hätte es ihn nie gegeben.
+
+> **Externe Bilder werden hier immer geladen** — anders als bei den profilgesteuerten Befehlen, wo das ausdrücklich eingeschaltet werden muss. Eine von Hand herausgezogene Mail soll so aussehen, wie der Absender sie gesetzt hat, und sie war im Mailprogramm ohnehin schon geöffnet. Der Preis: Beim Rendern werden auch Tracking-Pixel abgerufen, der Absender erfährt also Zeitpunkt und IP-Adresse der Verarbeitung. Wer das nicht will, legt die Mail stattdessen in ein Profil-Archiv und nutzt `imaparc render`.
 
 ## Optionen
 
@@ -216,7 +218,6 @@ Dieser Befehl arbeitet vollständig getrennt vom Archiv: er liest keine `profile
 | `render` | `--jobs`, `-j` | Parallele Renderings |
 | `eml` | `[PFADE...]` | Dateien oder Verzeichnisse (Default: aktuelles Verzeichnis) |
 | `eml` | `--name`, `-n` | Namensteil in den erzeugten Dateinamen (Default `mail`) |
-| `eml` | `--allow-remote-images` | Externe Bilder beim Rendern laden |
 | `eml` | `--jobs`, `-j` | Parallele Renderings |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 
