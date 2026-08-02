@@ -2,7 +2,7 @@
 
 > Archives IMAP mailboxes into readable .eml files by profile, and optionally renders them to searchable PDF/A.
 
-[Language: [Deutsch](README.md) | **English**] · Version `26.8.8`
+[Language: [Deutsch](README.md) | **English**] · Version `26.8.9`
 
 [![CI](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml/badge.svg)](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
