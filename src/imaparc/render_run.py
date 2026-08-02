@@ -130,10 +130,10 @@ async def _render_profile(
     os.chmod(output, 0o700)  # owner-writable, private (same as DIR_MODE at rest)
     sweep_staging(output)  # clear any .staging-* left by a previously aborted run
 
-    # Shared across this profile's concurrent renders so two mails that resolve
-    # to the same basename (same Date header + subject) reserve distinct names
-    # instead of racing on the output path.
-    claimed: set[str] = set()
+    # Shared across this profile's concurrent renders: distinct mails resolving
+    # to one basename reserve distinct names, while two copies of the same mail
+    # (two UIDs, one Message-ID) collapse into a single folder.
+    claimed: dict[str, str] = {}
 
     async def process(path: Path) -> RenderResult | None:
         async with semaphore:

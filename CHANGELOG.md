@@ -5,6 +5,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **The same mail delivered twice produced two PDF folders.** `_resolve_output()`
+  checked its in-flight reservations before the manifest, and those reservations
+  held names only — so a second copy of one mail saw "name taken" and quietly
+  took `<basename>-2` without ever comparing identities. Every later run then
+  skipped both folders, leaving the duplicate in place for good.
+
+  Two UIDs for one message are ordinary, not user error: Gmail lists a message in
+  All Mail *and* in its label folder, so a recursive scan delivers it twice; a
+  mail uploaded back to a server returns with a fresh UID. The reservation map now
+  carries the mail identity alongside the name, so a different mail still
+  disambiguates while a second copy of the same one skips.
+
 ### Added
 - **`--log-file <path>`** on `all`, `fetch`, `render` and `eml`. The logging setup
   has always supported a file that receives output *even at `-Q`* — the

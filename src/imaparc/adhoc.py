@@ -181,7 +181,7 @@ async def run_adhoc(
         ) as pool:
             # One reservation set per directory: base names only have to be
             # unique within the folder they are written to.
-            claimed: dict[Path, set[str]] = {d: set() for d in by_directory}
+            claimed: dict[Path, dict[str, str]] = {d: {} for d in by_directory}
 
             async def process(eml: Path) -> RenderResult | None:
                 async with semaphore:
