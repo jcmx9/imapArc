@@ -248,6 +248,7 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 | `install-service` | `--name`, `-n` | Name segment the right-click entry uses |
 | `doctor` | `--offline` | Skip the IMAP logins (no network access) |
 | `doctor` | `--env`, `--profiles` | Config files to inspect |
+| `all` / `fetch` / `render` / `eml` | `--log-file <path>` | Also write the log here — **including at `-Q`** |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 
 ## Development

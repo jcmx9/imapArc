@@ -249,6 +249,7 @@ Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, konta
 | `install-service` | `--name`, `-n` | Namensteil, den der Rechtsklick-Eintrag verwendet |
 | `doctor` | `--offline` | IMAP-Logins überspringen (kein Netzwerkzugriff) |
 | `doctor` | `--env`, `--profiles` | Zu prüfende Konfigurationsdateien |
+| `all` / `fetch` / `render` / `eml` | `--log-file <pfad>` | Log zusätzlich in diese Datei — **auch bei `-Q`** |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 
 ## Entwicklung
