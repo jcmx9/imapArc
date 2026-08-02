@@ -179,6 +179,7 @@ imaparc reset            # Zustell-Status löschen → nächster fetch verarbeit
 imaparc eml              # lose .eml-Dateien rendern, ganz ohne Profil
 imaparc install-service  # Finder-Rechtsklick „Mit imapArc archivieren" einrichten
 imaparc doctor           # Installation prüfen: Werkzeuge, Browser, Config, Login
+imaparc verify           # Archiv prüfen: Duplikate, Schäden, Reste
 
 imaparc all --profile hetzner    # jeden Modus auf ein Profil einschränken
 imaparc fetch --profile hetzner
@@ -248,6 +249,8 @@ Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, konta
 | `eml` | `--jobs`, `-j` | Parallele Renderings |
 | `install-service` | `--name`, `-n` | Namensteil, den der Rechtsklick-Eintrag verwendet |
 | `doctor` | `--offline` | IMAP-Logins überspringen (kein Netzwerkzugriff) |
+| `verify` | `--profiles <pfad>` | `profile.yaml` mit den zu prüfenden Archiven |
+| `verify` | `--profile <name>` | Nur dieses eine Archiv prüfen |
 | `doctor` | `--env`, `--profiles` | Zu prüfende Konfigurationsdateien |
 | `all` / `fetch` / `render` / `eml` | `--log-file <pfad>` | Log zusätzlich in diese Datei — **auch bei `-Q`** |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |

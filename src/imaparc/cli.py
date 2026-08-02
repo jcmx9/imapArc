@@ -29,6 +29,8 @@ from imaparc.profiles import Profile, load_profiles
 from imaparc.render_run import run_render
 from imaparc.service import SERVICES_DIR, install_quick_action
 from imaparc.state import StateStore
+from imaparc.verify import Severity, verify_profile
+from imaparc.verify import exit_code as verify_exit_code
 
 logger = logging.getLogger(__name__)
 
@@ -538,6 +540,44 @@ def doctor(
     else:
         console.print("[green]all good[/]")
     raise typer.Exit(exit_code(checks))
+
+
+@app.command()
+def verify(
+    profile_file: _ProfilesOpt = DEFAULT_PROFILES,
+    only_profile: _ProfileOpt = None,
+) -> None:
+    """Check the archives for damage, duplicates and leftovers.
+
+    Read-only — it reports, it never repairs. Exits 1 only when an archive is
+    actually damaged; duplicates and leftovers are reported but lose nothing, so
+    they must not make a scheduled check fail.
+    """
+    try:
+        profiles = load_profiles(profile_file)
+    except ConfigError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    profiles = _select_profiles(profiles, only_profile)
+
+    findings = [f for profile in profiles for f in verify_profile(profile)]
+    marks = {Severity.WARN: "[yellow]![/]", Severity.FAIL: "[red]✗[/]"}
+    for finding in findings:
+        console.print(
+            f"{marks[finding.severity]} {finding.profile:<12} "
+            f"{finding.kind:<12} {finding.detail}"
+        )
+
+    console.print()
+    if not findings:
+        console.print(f"[green]{len(profiles)} archive(s) look sound[/]")
+    else:
+        damaged = sum(1 for f in findings if f.severity is Severity.FAIL)
+        console.print(
+            f"{len(findings)} finding(s)"
+            + (f", [red]{damaged} of them damage[/]" if damaged else ", none fatal")
+        )
+    raise typer.Exit(verify_exit_code(findings))
 
 
 @app.command(name="install-service")

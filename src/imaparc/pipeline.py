@@ -56,10 +56,11 @@ from imaparc.storage import DIR_MODE, make_dir, write_readonly
 
 logger = logging.getLogger(__name__)
 
-# Hidden manifest in each mail's subfolder, holding the mail identity so a rerun
-# (same mail) can be told apart from a basename collision (a different mail).
-_MANIFEST = ".imaparc-manifest"
-_STAGING_PREFIX = ".staging-"
+# The on-disk archive format, public because `verify` reads it too: a hidden
+# manifest in each mail's subfolder holds the mail identity, so a rerun (same
+# mail) can be told apart from a basename collision (a different mail).
+MANIFEST = ".imaparc-manifest"
+STAGING_PREFIX = ".staging-"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f]")
 
 
@@ -188,10 +189,10 @@ def _mail_identity(parsed: ParsedMail, timestamp: datetime | None) -> str:
     return f"{parsed.headers.from_}|{parsed.headers.subject}|{timestamp}"
 
 
-def _read_identity(subfolder: Path) -> str | None:
+def read_identity(subfolder: Path) -> str | None:
     """Read the stored mail identity from a subfolder's manifest, if present."""
     try:
-        return (subfolder / _MANIFEST).read_text(encoding="utf-8").strip()
+        return (subfolder / MANIFEST).read_text(encoding="utf-8").strip()
     except OSError:
         return None
 
@@ -235,7 +236,7 @@ def _resolve_output(
                 return candidate, True  # same mail, a sibling render has it
             # A different mail holds the name — disambiguate.
         elif subfolder.exists():
-            if _read_identity(subfolder) == identity:
+            if read_identity(subfolder) == identity:
                 return candidate, True
             # A different mail (or corrupt folder) owns this name — disambiguate.
         else:
@@ -256,7 +257,7 @@ def sweep_staging(output_dir: Path) -> None:
     """
     if not output_dir.exists():
         return
-    for staging in output_dir.glob(f"{_STAGING_PREFIX}*"):
+    for staging in output_dir.glob(f"{STAGING_PREFIX}*"):
         _remove_tree(staging)
 
 
@@ -452,10 +453,10 @@ def _store(
     write_readonly + disambiguate); a ``.imaparc-manifest`` records the mail
     identity so a later run tells a re-render from a distinct basename collision.
     """
-    staging = output_dir / f"{_STAGING_PREFIX}{basename}"
+    staging = output_dir / f"{STAGING_PREFIX}{basename}"
     _remove_tree(staging)
     make_dir(staging)
-    write_readonly(staging / _MANIFEST, identity.encode("utf-8"))
+    write_readonly(staging / MANIFEST, identity.encode("utf-8"))
     write_readonly(staging / f"{basename}.pdf", primary_pdfa)
     if mailonly_pdfa is not None:
         write_readonly(staging / f"{basename}_mailonly.pdf", mailonly_pdfa)

@@ -5,6 +5,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`imaparc verify`** checks existing archives: two folders holding the same
+  mail, `.eml` files that were never rendered, folders missing their PDF or their
+  manifest, and `.staging-*` left by an interrupted run. Read-only — it reports,
+  it never repairs, because which of two duplicates to keep is a judgement call
+  and an archive built to stay untouched should not be rewritten behind your back.
+
+  Exits 1 **only** on actual damage. Duplicates and leftovers are reported but
+  lose nothing, so they must not fail a scheduled check — otherwise the failure
+  signal stops meaning anything.
+
+  The duplicate check matters right now: the reservation bug fixed in 26.8.7 left
+  duplicate folders behind in archives written before it, and the fix does not
+  reach backwards. Anyone who ran imapArc against Gmail is likely to have some.
+
 ## [26.8.7] - 2026-08-02
 
 ### Fixed
