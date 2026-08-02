@@ -85,6 +85,38 @@ _MATCH_OPTIONAL = [
 _PROFILE_OPTIONAL = [
     ("remote_images", "load external images when rendering", "remote_images: false"),
     ("jobs", "parallel renders for this profile (default 4)", "jobs: 4"),
+    (
+        "gs_jobs",
+        "parallel Ghostscript runs (default 2); keep below jobs, it is the "
+        "memory-hungry step",
+        "gs_jobs: 2",
+    ),
+    (
+        "filename_pattern",
+        "name scheme for the .eml and its PDF folder; placeholders {date}, "
+        "{profile}, {subject}",
+        "filename_pattern: '{date}_{profile}_{subject}'",
+    ),
+    (
+        "date_format",
+        "date tokens for {date}: YYYY MM DD hh mm ss",
+        "date_format: YYYY-MM-DD_hh-mm-ss",
+    ),
+    (
+        "max_attachment_bytes",
+        "skip attachments larger than this (default 400 MB)",
+        "max_attachment_bytes: 419430400",
+    ),
+    (
+        "attachment_timeout_s",
+        "give up converting one attachment after this long (default 120)",
+        "attachment_timeout_s: 120",
+    ),
+    (
+        "render_timeout_ms",
+        "give up rendering one mail body after this long (default 30000)",
+        "render_timeout_ms: 30000",
+    ),
 ]
 _AFTER_FETCH_FIELDS = [
     ("label", "add this IMAP keyword", "label: Archiviert"),

@@ -287,9 +287,18 @@ def _basename_for(profile: Profile, message: ScannedMessage) -> str:
     """The shared ``.eml``/PDF base name for a delivered message.
 
     Uses the message ``Date`` header, falling back to the IMAP ``INTERNALDATE``.
+    The naming options come from the profile, which is also what the render phase
+    reads — the two must agree, or the ``.eml`` and its PDF folder end up with
+    different names and nothing links them any more.
     """
     timestamp = message.headers.date or message.received
-    return build_base_name(timestamp, profile.name, message.headers.subject)
+    return build_base_name(
+        timestamp,
+        profile.name,
+        message.headers.subject,
+        pattern=profile.filename_pattern,
+        date_format=profile.date_format,
+    )
 
 
 def _match_candidate(

@@ -85,6 +85,26 @@ profiles:
                                      #   forces this on for all profiles.
     jobs: 4                          # Optional, default 4. Parallel renders for this
                                      #   profile. The CLI --jobs overrides it.
+    gs_jobs: 2                       # Optional, default 2. Parallel Ghostscript runs.
+                                     #   Keep this below `jobs`: one conversion holds
+                                     #   a whole document in memory, so this is what
+                                     #   bounds peak memory use.
+
+    # --- naming -------------------------------------------------------------
+    # Both phases read these: fetch names the .eml, render names the PDF folder,
+    # and the shared base name is what ties the two together. Changing the scheme
+    # affects only mail archived from then on; existing files keep their names.
+    filename_pattern: '{date}_{profile}_{subject}'
+                                     # Optional. Placeholders: {date}, {profile},
+                                     #   {subject}. Each may appear more than once.
+    date_format: YYYY-MM-DD_hh-mm-ss # Optional. Tokens for {date}: YYYY MM DD hh mm ss.
+                                     #   e.g. 'YYYY-MM-DD' for date only.
+
+    # --- safety limits while rendering --------------------------------------
+    max_attachment_bytes: 419430400  # Optional, default 400 MB. Larger attachments
+                                     #   are kept as originals but not converted.
+    attachment_timeout_s: 120        # Optional, default 120. Per attachment.
+    render_timeout_ms: 30000         # Optional, default 30000. Per mail body.
 
     after_fetch:                     # Optional, default null. Server-side action
                                      #   applied ONLY after the message is durably

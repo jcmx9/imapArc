@@ -148,6 +148,12 @@ profiles:
     pdf: true                      # optional: auch PDFs rendern (Default false)
     # remote_images: false       # externe Bilder beim Rendern laden (CLI erzwingt)
     # jobs: 4                    # parallele Renderings (CLI --jobs überschreibt)
+    # gs_jobs: 2                 # parallele Ghostscript-Läufe (begrenzt den Speicher)
+    # filename_pattern: '{date}_{profile}_{subject}'   # Namensschema
+    # date_format: YYYY-MM-DD_hh-mm-ss                 # Tokens für {date}
+    # max_attachment_bytes: 419430400   # größere Anhänge nicht konvertieren
+    # attachment_timeout_s: 120         # Zeitlimit je Anhang
+    # render_timeout_ms: 30000          # Zeitlimit je Mail-Body
     after_fetch:                   # optional; erst nach gesicherter Ablage
       label: Archiviert            #   IMAP-Keyword setzen
       move_to: Archiv/Erledigt     #   verschieben (exklusiv zu delete)

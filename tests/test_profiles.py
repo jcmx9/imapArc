@@ -9,7 +9,7 @@ import pytest
 
 from imaparc.accounts import Account, ConfigError
 from imaparc.mail.models import MailHeaders
-from imaparc.profiles import first_match, load_profiles, matches
+from imaparc.profiles import Profile, first_match, load_profiles, matches
 
 _ACCOUNTS = {"privat": Account(name="privat", host="h", user="u", password="p")}
 
@@ -299,3 +299,86 @@ profiles:
     assert hit is not None and hit.name == "specific"
     none = first_match(profiles, _headers(from_="x@other.com"))
     assert none is None
+
+
+# --- new render options travel from YAML to the run config ------------------
+
+
+def test_naming_and_limits_are_read_from_yaml(tmp_path: Path) -> None:
+    path = tmp_path / "profile.yaml"
+    path.write_text(
+        "profiles:\n"
+        "  - name: p\n"
+        "    account: a\n"
+        f"    output: {tmp_path}\n"
+        "    filename_pattern: '{subject}_{date}'\n"
+        "    date_format: YYYY-MM-DD\n"
+        "    gs_jobs: 1\n"
+        "    max_attachment_bytes: 1048576\n"
+        "    attachment_timeout_s: 5\n"
+        "    render_timeout_ms: 9000\n",
+        encoding="utf-8",
+    )
+
+    profile = load_profiles(path)[0]
+
+    assert profile.filename_pattern == "{subject}_{date}"
+    assert profile.date_format == "YYYY-MM-DD"
+    assert profile.gs_jobs == 1
+    assert profile.max_attachment_bytes == 1024 * 1024
+    assert profile.attachment_timeout_s == 5
+    assert profile.render_timeout_ms == 9000
+
+
+def test_render_run_hands_the_profile_options_to_the_config(tmp_path: Path) -> None:
+    """The wiring that makes the YAML values actually take effect."""
+    import asyncio
+
+    from imaparc.config import ToolPaths
+    from imaparc.render_run import run_render
+
+    output = tmp_path / "out"
+    (output / "eml").mkdir(parents=True)
+    profile = Profile(
+        name="p",
+        account="a",
+        output=output,
+        filename_pattern="{subject}",
+        date_format="YYYY",
+        gs_jobs=1,
+        render_timeout_ms=9000,
+    )
+    seen: list[object] = []
+
+    async def _run() -> None:
+        # No mails to render, so the pool is never opened — we only want the
+        # config that run_render builds from the profile.
+        import imaparc.render_run as rr
+
+        original = rr.RunConfig
+
+        def _spy(**kwargs: object) -> object:
+            seen.append(kwargs)
+            return original(**kwargs)  # type: ignore[arg-type]
+
+        rr.RunConfig = _spy  # type: ignore[misc]
+        try:
+            await run_render(
+                [profile],
+                ToolPaths(gs=Path("/gs"), qpdf=Path("/qpdf"), verapdf=Path("/verapdf")),
+                cli_remote=False,
+                cli_jobs=None,
+                verbosity=0,
+            )
+        finally:
+            rr.RunConfig = original  # type: ignore[misc]
+
+    asyncio.run(_run())
+
+    assert seen, "run_render built no RunConfig"
+    built = seen[0]
+    assert isinstance(built, dict)
+    assert built["filename_pattern"] == "{subject}"
+    assert built["date_format"] == "YYYY"
+    assert built["gs_jobs"] == 1
+    assert built["render_timeout_ms"] == 9000
