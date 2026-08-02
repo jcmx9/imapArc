@@ -48,7 +48,8 @@ def test_defaults_are_sane(tmp_path: Path) -> None:
     cfg = RunConfig(tools=_tools(tmp_path))
     assert cfg.verbosity == 1
     assert cfg.jobs == 4
-    assert cfg.validate_pdfa is True
+    # Ghostscript is capped below `jobs`: it is the memory-hungry step.
+    assert cfg.gs_jobs < cfg.jobs
 
 
 def test_filename_defaults_use_profile_scheme(tmp_path: Path) -> None:
