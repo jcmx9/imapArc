@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.8] - 2026-08-02
+
 ### Added
 - **`imaparc verify`** checks existing archives: two folders holding the same
   mail, `.eml` files that were never rendered, folders missing their PDF or their
