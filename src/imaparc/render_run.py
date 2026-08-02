@@ -72,7 +72,15 @@ async def run_render(
             tools=tools,
             verbosity=verbosity,
             jobs=jobs,
+            gs_jobs=profile.gs_jobs,
             allow_remote=cli_remote or profile.remote_images,
+            # Same source as fetch's naming, so the .eml and this profile's PDF
+            # folders keep sharing one base name.
+            filename_pattern=profile.filename_pattern,
+            date_format=profile.date_format,
+            max_attachment_bytes=profile.max_attachment_bytes,
+            attachment_timeout_s=profile.attachment_timeout_s,
+            render_timeout_ms=profile.render_timeout_ms,
         )
         plans.append(
             (profile, config, profile.output / "pdf", EmlSource(eml_dir).paths())

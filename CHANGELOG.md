@@ -5,6 +5,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Naming scheme and safety limits are configurable per profile.**
+  `filename_pattern` and `date_format` shape the base name (placeholders `{date}`,
+  `{profile}`, `{subject}`; date tokens `YYYY MM DD hh mm ss`), and `gs_jobs`,
+  `max_attachment_bytes`, `attachment_timeout_s` and `render_timeout_ms` are no
+  longer fixed constants. All of it existed and was tested — it just could not be
+  reached from a `profile.yaml`.
+
+### Fixed
+- **The naming scheme was only half wired up.** `pipeline.py` honoured
+  `filename_pattern`/`date_format`, `fetch.py` did not. Since fetch names the
+  `.eml` and render names the PDF folder, configuring a scheme would have given
+  the two different names — and the shared base name is the only thing linking a
+  raw mail to its rendition. Nothing would have failed; the archive would just
+  have quietly stopped matching up. Both phases now read the options from the same
+  `Profile` object, with a test that asserts the two agree.
+
 ### Fixed
 - **`gs_jobs` now does what it says.** The field existed in `config.py` and in two
   sentences of the documentation, but was never read: Ghostscript ran through

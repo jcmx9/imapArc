@@ -740,3 +740,58 @@ def test_run_fetch_deletes_source_after_archiving(tmp_path: Path) -> None:
     with ImapConnection(account) as conn:
         conn._conn.select_folder("INBOX")
         assert conn._conn.search(["ALL"]) == []
+
+
+# --- the .eml and the PDF folder must share one base name -------------------
+
+
+def test_fetch_and_render_agree_on_the_base_name(tmp_path: Path) -> None:
+    """The shared base name is what links a raw mail to its rendered folder.
+
+    fetch names the .eml, render names the PDF folder. Before this, only the
+    render side honoured a custom pattern, so configuring one silently split the
+    two apart — no error, just an archive whose halves no longer match up.
+    """
+    from datetime import UTC, datetime
+
+    from imaparc.naming import build_base_name
+    from imaparc.profiles import Profile
+
+    profile = Profile(
+        name="hetzner",
+        account="a",
+        output=tmp_path,
+        filename_pattern="{subject}_{date}",
+        date_format="YYYY-MM-DD",
+    )
+    timestamp = datetime(2026, 8, 1, 10, 30, tzinfo=UTC)
+
+    # What fetch derives for the .eml …
+    from imaparc.fetch import _basename_for
+    from imaparc.mail.models import MailHeaders
+    from imaparc.sources.imap import ScannedMessage
+
+    message = ScannedMessage(
+        uid=1,
+        headers=MailHeaders(
+            from_="s@example.com",
+            to="",
+            cc="",
+            bcc="",
+            subject="Rechnung",
+            date=timestamp,
+            message_id="<x@y>",
+        ),
+    )
+    from_fetch = _basename_for(profile, message)
+
+    # … must equal what the render side derives for the folder.
+    from_render = build_base_name(
+        timestamp,
+        profile.name,
+        "Rechnung",
+        pattern=profile.filename_pattern,
+        date_format=profile.date_format,
+    )
+
+    assert from_fetch == from_render == "Rechnung_2026-08-01"

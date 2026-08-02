@@ -17,6 +17,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from imaparc import naming
 from imaparc.accounts import Account, ConfigError
 from imaparc.mail.models import MailHeaders
 from imaparc.naming import extract_email_addresses
@@ -98,6 +99,12 @@ class Profile(BaseModel):
     ``remote_images`` and ``jobs`` are per-profile render settings; the CLI flags
     ``--allow-remote-images`` / ``--jobs`` override them for the whole run
     (otherwise the profile value applies).
+
+    ``filename_pattern`` and ``date_format`` live here rather than in the render
+    config because **both phases must agree on them**: fetch names the ``.eml``,
+    render names the PDF folder, and the shared base name is what ties a raw mail
+    to its rendition. Reading them from the same profile object is what keeps the
+    two halves in step.
     """
 
     name: str
@@ -107,7 +114,17 @@ class Profile(BaseModel):
     pdf: bool = False
     remote_images: bool = False  # load remote images when rendering this profile
     jobs: int = Field(default=4, ge=1)  # parallel renders; CLI --jobs overrides
+    gs_jobs: int = Field(default=2, ge=1)  # parallel Ghostscript runs (memory)
     after_fetch: AfterFetch | None = None
+
+    # Naming — used by both phases, see the class docstring.
+    filename_pattern: str = naming.DEFAULT_PATTERN
+    date_format: str = naming.DEFAULT_DATE_FORMAT
+
+    # Per-attachment safety limits, applied while rendering.
+    max_attachment_bytes: int = Field(default=400 * 1024 * 1024, ge=0)
+    attachment_timeout_s: float = Field(default=120.0, gt=0)
+    render_timeout_ms: int = Field(default=30_000, gt=0)
 
 
 def load_profiles(

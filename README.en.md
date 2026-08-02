@@ -146,7 +146,13 @@ profiles:
     output: ~/Archiv/Hetzner       # target; eml/ and (if pdf) pdf/ go here
     pdf: true                      # optional: also render PDFs (default false)
     # remote_images: false       # load external images when rendering (CLI can force)
-    # jobs: 4                    # parallel renders (CLI --jobs overrides) (CLI can force)
+    # jobs: 4                    # parallel renders (CLI --jobs overrides)
+    # gs_jobs: 2                 # parallel Ghostscript runs (this bounds memory)
+    # filename_pattern: '{date}_{profile}_{subject}'   # naming scheme
+    # date_format: YYYY-MM-DD_hh-mm-ss                 # tokens for {date}
+    # max_attachment_bytes: 419430400   # do not convert larger attachments
+    # attachment_timeout_s: 120         # per-attachment time limit
+    # render_timeout_ms: 30000          # per-mail-body time limit
     after_fetch:                   # optional; only after safe archiving
       label: Archiviert            #   set an IMAP keyword
       move_to: Archiv/Erledigt     #   move (mutually exclusive with delete)
