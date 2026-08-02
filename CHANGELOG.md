@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.6] - 2026-08-02
+
 ### Added
 - **`imaparc doctor`** checks an installation in one go: gs/qpdf/verapdf on PATH,
   a Chromium build matching the installed Playwright, the sRGB ICC profile,
