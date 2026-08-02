@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.9] - 2026-08-02
+
 ### Added
 - **`fetch` shows progress.** It previously ran blind: on a large mailbox over a
   slow link there was no way to tell it apart from a hang. The bar starts
