@@ -168,6 +168,7 @@ Everything is driven by `profile.yaml`. `imaparc` with no command shows the help
 ```bash
 imaparc all              # full run over ALL profiles: fetch, then render (pdf: true only)
 imaparc fetch            # collect only (IMAP → .eml); pdf flag irrelevant
+imaparc fetch --dry-run  # only show what would happen — writes nothing
 imaparc render           # render only — ALL profiles (pdf flag is ignored)
 imaparc init             # create the central config
 imaparc add-profile NAME # append a new, fully documented profile to profile.yaml
@@ -234,6 +235,8 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 | `fetch` | `--profiles <path>` | `profile.yaml` (default `~/.config/imaparc/profile.yaml`) |
 | `fetch` | `--profile <name>` | Run only this one profile |
 | `fetch` | `--state <path>` | SQLite state file |
+| `fetch` | `--dry-run` | Only show what would be archived and what would happen on the server; writes nothing |
+| `fetch` | `--no-server-actions` | Archive normally, but never label, move or delete |
 | `render` | `--profiles <path>` | `profile.yaml` (default `~/.config/imaparc/profile.yaml`) |
 | `render` | `--profile <name>` | Render only this profile |
 | `render` | `--allow-remote-images` | Force remote images (else per-profile `remote_images`) |

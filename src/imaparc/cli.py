@@ -86,6 +86,21 @@ _NameOpt = Annotated[
         help="Name segment in the generated file names (the profile's slot).",
     ),
 ]
+_DryRunOpt = Annotated[
+    bool,
+    typer.Option(
+        "--dry-run",
+        help="Show what would be archived and what would happen on the server; "
+        "write nothing.",
+    ),
+]
+_NoServerActionsOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-server-actions",
+        help="Archive normally, but never label, move or delete on the server.",
+    ),
+]
 _SilentOpt = Annotated[bool, typer.Option("--silent", "-Q", help="No console output.")]
 _VerboseOpt = Annotated[bool, typer.Option("--verbose", "-v", help="Verbose output.")]
 _DebugOpt = Annotated[bool, typer.Option("--debug", "-vv", help="Debug output.")]
@@ -515,14 +530,30 @@ def fetch(
     profile_file: _ProfilesOpt = DEFAULT_PROFILES,
     only_profile: _ProfileOpt = None,
     state_db: _StateOpt = None,
+    dry_run: _DryRunOpt = False,
+    no_server_actions: _NoServerActionsOpt = False,
     silent: _SilentOpt = False,
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
 ) -> None:
-    """Fetch new mail from IMAP into the profile eml/ archives (no rendering)."""
+    """Fetch new mail from IMAP into the profile eml/ archives (no rendering).
+
+    ``--dry-run`` only shows which mail each profile would take and what would
+    happen to it on the server — nothing is written and nothing is touched.
+    ``--no-server-actions`` archives normally but suppresses every label, move
+    and delete; useful for a first run with a profile that deletes.
+    """
     verbosity = _verbosity(silent, verbose, debug)
     setup_logging(verbosity)
-    _do_fetch(env_file, profile_file, only_profile, state_db, verbosity)
+    _do_fetch(
+        env_file,
+        profile_file,
+        only_profile,
+        state_db,
+        verbosity,
+        dry_run=dry_run,
+        no_server_actions=no_server_actions,
+    )
 
 
 def _select_profiles(
@@ -560,6 +591,9 @@ def _do_fetch(
     only_profile: str | None,
     state_db: Path | None,
     verbosity: int,
+    *,
+    dry_run: bool = False,
+    no_server_actions: bool = False,
 ) -> None:
     """Load config, then fetch the selected profiles into their eml/ archives."""
     try:
@@ -570,10 +604,17 @@ def _do_fetch(
         raise typer.Exit(1) from exc
     profiles = _select_profiles(profiles, only_profile)
     try:
-        report = run_fetch(accounts, profiles, StateStore(state_db or DEFAULT_STATE))
+        report = run_fetch(
+            accounts,
+            profiles,
+            StateStore(state_db or DEFAULT_STATE),
+            dry_run=dry_run,
+            no_server_actions=no_server_actions,
+        )
     except KeyboardInterrupt:
         _abort()
-    if verbosity > 0:
+    # A dry run's whole output *is* the summary, so print it even at -Q.
+    if verbosity > 0 or dry_run:
         typer.echo(report.summary())
 
 

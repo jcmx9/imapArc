@@ -795,3 +795,172 @@ def test_fetch_and_render_agree_on_the_base_name(tmp_path: Path) -> None:
     )
 
     assert from_fetch == from_render == "Rechnung_2026-08-01"
+
+
+# --- dry-run and no-server-actions ------------------------------------------
+
+
+def _planned_profile(output: Path) -> object:
+    from imaparc.profiles import AfterFetch, Profile
+
+    return Profile(
+        name="p",
+        account="a",
+        output=output,
+        match={"domains": ["@kanzlei.de"]},
+        after_fetch=AfterFetch(label="imapArc", move_to="imapArc"),
+    )
+
+
+class _RecordingConn:
+    """Records every server-side call so a test can assert none happened."""
+
+    def __init__(self, message: object) -> None:
+        self._message = message
+        self.calls: list[str] = []
+
+    def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+        return 7, [self._message]
+
+    def fetch_body(self, folder: str, uid: int) -> bytes:
+        from tests.mail_builder import build_mail
+
+        return build_mail(from_="anwalt@kanzlei.de", subject="Sache")
+
+    def label(self, folder: str, uid: int, keyword: str) -> None:
+        self.calls.append("label")
+
+    def move(self, folder: str, uid: int, destination: str) -> None:
+        self.calls.append("move")
+
+    def delete(self, folder: str, uid: int) -> None:
+        self.calls.append("delete")
+
+
+def test_dry_run_writes_nothing_at_all(tmp_path: Path) -> None:
+    """No .eml, no state entry, no server call — the point is to look first."""
+    from imaparc.fetch import _fetch_folder
+    from imaparc.state import StateStore
+
+    output = tmp_path / "out"
+    conn = _RecordingConn(_kanzlei_msg(1))
+    state = StateStore(tmp_path / "state.db")
+    report = FetchReport()
+
+    _fetch_folder(
+        conn,  # type: ignore[arg-type]
+        "acc",
+        "INBOX",
+        [_planned_profile(output)],  # type: ignore[list-item]
+        state,
+        report,
+        dry_run=True,
+    )
+
+    assert conn.calls == []  # server untouched
+    assert not (output / "eml").exists()  # nothing written
+    assert state.delivered_uids("acc", "INBOX", 7) == set()  # no state
+    assert report.planned  # but it reported what it would do
+
+
+def test_dry_run_reports_the_action_it_would_take(tmp_path: Path) -> None:
+    from imaparc.fetch import _fetch_folder
+    from imaparc.state import StateStore
+
+    report = FetchReport()
+    _fetch_folder(
+        _RecordingConn(_kanzlei_msg(1)),  # type: ignore[arg-type]
+        "acc",
+        "INBOX",
+        [_planned_profile(tmp_path / "out")],  # type: ignore[list-item]
+        StateStore(tmp_path / "state.db"),
+        report,
+        dry_run=True,
+    )
+
+    summary = report.summary()
+    assert "would" in summary.lower()
+    assert "imapArc" in summary  # names the move target
+
+
+def test_no_server_actions_archives_but_leaves_the_server_alone(
+    tmp_path: Path,
+) -> None:
+    from imaparc.fetch import _fetch_folder
+    from imaparc.state import StateStore
+
+    output = tmp_path / "out"
+    conn = _RecordingConn(_kanzlei_msg(1))
+    state = StateStore(tmp_path / "state.db")
+    report = FetchReport()
+
+    _fetch_folder(
+        conn,  # type: ignore[arg-type]
+        "acc",
+        "INBOX",
+        [_planned_profile(output)],  # type: ignore[list-item]
+        state,
+        report,
+        no_server_actions=True,
+    )
+
+    assert conn.calls == []  # no label/move/delete
+    assert list((output / "eml").glob("*.eml"))  # but it was archived
+    assert state.delivered_uids("acc", "INBOX", 7) == {1}  # and recorded
+    assert report.total == 1
+
+
+@pytest.mark.skipif(not _greenmail_up(), reason="GreenMail not running")
+def test_dry_run_against_a_live_server_changes_nothing(tmp_path: Path) -> None:
+    """The guarantee that matters: a real server, and nothing moved or deleted."""
+    import imaplib
+    import smtplib
+
+    from pydantic import SecretStr
+
+    from imaparc.accounts import Account
+    from imaparc.fetch import run_fetch
+    from imaparc.profiles import AfterFetch, Profile
+    from imaparc.state import StateStore
+    from tests.mail_builder import build_mail
+
+    user = f"dryrun-{os.getpid()}@localhost"
+    with smtplib.SMTP("localhost", 3025, timeout=10) as smtp:
+        smtp.sendmail(
+            "anwalt@kanzlei.de",
+            [user],
+            build_mail(from_="anwalt@kanzlei.de", to=user, subject="Sache").decode(),
+        )
+
+    output = tmp_path / "out"
+    account = Account(
+        name="a",
+        host="localhost",
+        port=3143,
+        ssl=False,
+        user=user,
+        password=SecretStr("x"),
+    )
+    profile = Profile(
+        name="p",
+        account="a",
+        output=output,
+        match={"domains": ["@kanzlei.de"]},
+        after_fetch=AfterFetch(delete=True),  # the irreversible one
+    )
+
+    report = run_fetch(
+        {"a": account}, [profile], StateStore(tmp_path / "state.db"), dry_run=True
+    )
+
+    assert len(report.planned) == 1
+    assert "DELETE" in report.summary()
+    assert not (output / "eml").exists()
+
+    # The mail is still on the server, untouched.
+    box = imaplib.IMAP4("localhost", 3143)
+    box.login(user, "x")
+    box.select("INBOX")
+    typ, data = box.search(None, "ALL")
+    box.logout()
+    assert len(data[0].split()) == 1, "dry run must not have deleted the mail"

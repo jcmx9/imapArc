@@ -30,6 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class PlannedDelivery:
+    """What a dry run *would* have done with one message."""
+
+    profile: str
+    folder: str
+    uid: int
+    subject: str
+    action: str  # human-readable, e.g. "move to 'imapArc'" or "leave in place"
+
+
+@dataclass
 class FetchReport:
     """Counts delivered messages per profile and records failures."""
 
@@ -38,6 +49,7 @@ class FetchReport:
     post_fetch_failed: int = 0  # archived, but the server-side action failed
     already_archived: int = 0  # candidates seen but archived on a previous run
     post_fetch_skipped: int = 0  # server action skipped: no local .eml copy now
+    planned: list[PlannedDelivery] = field(default_factory=list)  # dry run only
 
     def add(self, profile_name: str) -> None:
         self.delivered[profile_name] = self.delivered.get(profile_name, 0) + 1
@@ -47,6 +59,8 @@ class FetchReport:
         return sum(self.delivered.values())
 
     def summary(self) -> str:
+        if self.planned:
+            return self._dry_run_summary()
         lines = [f"{self.total} delivered"]
         for name, count in sorted(self.delivered.items()):
             lines.append(f"  {name}: {count}")
@@ -69,11 +83,37 @@ class FetchReport:
             )
         return "\n".join(lines)
 
+    def _dry_run_summary(self) -> str:
+        """What a real run would do — nothing has been written or touched."""
+        lines: list[str] = []
+        for item in self.planned:
+            lines.append(
+                f"{item.profile:<12} {item.folder}/{item.uid}  {item.subject!r}"
+            )
+            lines.append(f"{'':<12} → would {item.action}")
+        lines.append("")
+        lines.append(
+            f"{len(self.planned)} mail(s) would be archived — dry run, "
+            "nothing written and nothing changed on the server"
+        )
+        return "\n".join(lines)
+
 
 def run_fetch(
-    accounts: dict[str, Account], profiles: list[Profile], state: StateStore
+    accounts: dict[str, Account],
+    profiles: list[Profile],
+    state: StateStore,
+    *,
+    dry_run: bool = False,
+    no_server_actions: bool = False,
 ) -> FetchReport:
-    """Fetch new mail for all profiles and deliver it into their eml archives."""
+    """Fetch new mail for all profiles and deliver it into their eml archives.
+
+    ``dry_run`` only reports what would happen: no ``.eml``, no state entry, no
+    server call. ``no_server_actions`` archives as usual but suppresses every
+    label/move/delete — useful for a first run with a new profile, where
+    ``after_fetch: delete`` is otherwise irreversible.
+    """
     report = FetchReport()
     by_account: dict[str, list[Profile]] = defaultdict(list)
     for profile in profiles:
@@ -112,7 +152,14 @@ def run_fetch(
                     if folder in excluded:
                         continue
                     _fetch_folder(
-                        conn, account_name, folder, folder_profiles, state, report
+                        conn,
+                        account_name,
+                        folder,
+                        folder_profiles,
+                        state,
+                        report,
+                        dry_run=dry_run,
+                        no_server_actions=no_server_actions,
                     )
         except ImapArcError as exc:
             logger.error("account '%s' failed: %s", account_name, exc)
@@ -199,8 +246,16 @@ def _fetch_folder(
     profiles: list[Profile],
     state: StateStore,
     report: FetchReport,
+    *,
+    dry_run: bool = False,
+    no_server_actions: bool = False,
 ) -> None:
-    """Scan a folder, match every candidate afresh, deliver the new matches."""
+    """Scan a folder, match every candidate afresh, deliver the new matches.
+
+    ``dry_run`` reports what would happen and writes nothing at all — no ``.eml``,
+    no state entry, no server call. ``no_server_actions`` archives normally but
+    suppresses every label/move/delete, for a first run with a new profile.
+    """
     uidvalidity, candidates = conn.scan(folder, since=_earliest_since(profiles))
     delivered = state.delivered_uids(account_name, folder, uidvalidity)
     # Make the state store visible: say how many candidates were already archived
@@ -230,6 +285,19 @@ def _fetch_folder(
                 # Not a match: leave it unmarked so a later profile change can
                 # still pick it up on a future run.
                 continue
+            if dry_run:
+                # Record the intent and move on before anything is written: no
+                # .eml, no state row, no server call. That is the whole point.
+                report.planned.append(
+                    PlannedDelivery(
+                        profile=profile.name,
+                        folder=folder,
+                        uid=message.uid,
+                        subject=message.headers.subject,
+                        action=_describe_action(profile),
+                    )
+                )
+                continue
             eml_dir = profile.output / "eml"
             if not already:
                 if raw is None:
@@ -252,7 +320,7 @@ def _fetch_folder(
                 )
                 name = stored or f"{_basename_for(profile, message)}.eml"
                 eml_path = eml_dir / name
-            if profile.after_fetch is not None:
+            if profile.after_fetch is not None and not no_server_actions:
                 # New match, or a delivered one still present because a prior
                 # move/delete failed — (re-)apply so the action is enforced.
                 # But never touch the server unless the local .eml exists *now*:
@@ -281,6 +349,21 @@ def _fetch_folder(
             # abort the folder; it stays unmarked so it retries next run.
             report.failed += 1
             logger.exception("UID %s in %s failed unexpectedly", message.uid, folder)
+
+
+def _describe_action(profile: Profile) -> str:
+    """The server-side action a real run would apply, in plain words."""
+    action = profile.after_fetch
+    if action is None:
+        return "archive it and leave the server untouched"
+    parts: list[str] = []
+    if action.label:
+        parts.append(f"label it {action.label!r}")
+    if action.move_to:
+        parts.append(f"move it to {action.move_to!r}")
+    elif action.delete:
+        parts.append("DELETE it from the server")
+    return "archive it, then " + " and ".join(parts) if parts else "archive it"
 
 
 def _basename_for(profile: Profile, message: ScannedMessage) -> str:
