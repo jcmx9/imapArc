@@ -19,6 +19,8 @@ env/
 
 # Testing / Coverage
 .coverage
+# pytest-xdist writes one fragment per worker; an interrupted run leaves them.
+.coverage.*
 coverage.xml
 htmlcov/
 .pytest_cache/
