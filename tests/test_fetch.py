@@ -961,6 +961,6 @@ def test_dry_run_against_a_live_server_changes_nothing(tmp_path: Path) -> None:
     box = imaplib.IMAP4("localhost", 3143)
     box.login(user, "x")
     box.select("INBOX")
-    typ, data = box.search(None, "ALL")
+    _typ, data = box.search(None, "ALL")
     box.logout()
     assert len(data[0].split()) == 1, "dry run must not have deleted the mail"
