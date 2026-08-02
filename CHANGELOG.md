@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`--log-file <path>`** on `all`, `fetch`, `render` and `eml`. The logging setup
+  has always supported a file that receives output *even at `-Q`* — the
+  documentation names it as the reason silent mode is usable from cron — but no
+  command ever passed a path, so `-Q` simply produced no record at all. Same shape
+  as the `gs_jobs` gap: implemented, documented, unreachable.
+
 ## [26.8.6] - 2026-08-02
 
 ### Added

@@ -103,6 +103,14 @@ _NoServerActionsOpt = Annotated[
         help="Archive normally, but never label, move or delete on the server.",
     ),
 ]
+_LogFileOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--log-file",
+        help="Also write the log here — including at -Q, which is what makes "
+        "silent runs usable from cron.",
+    ),
+]
 _SilentOpt = Annotated[bool, typer.Option("--silent", "-Q", help="No console output.")]
 _VerboseOpt = Annotated[bool, typer.Option("--verbose", "-v", help="Verbose output.")]
 _DebugOpt = Annotated[bool, typer.Option("--debug", "-vv", help="Debug output.")]
@@ -147,6 +155,7 @@ def run_all(
     state_db: _StateOpt = None,
     allow_remote_images: _RemoteOpt = False,
     jobs: _JobsOpt = None,
+    log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
@@ -156,7 +165,7 @@ def run_all(
     ``--profile <name>`` restricts the run to one profile.
     """
     verbosity = _verbosity(silent, verbose, debug)
-    setup_logging(verbosity)
+    setup_logging(verbosity, log_file)
     _do_fetch(env_file, profile_file, only_profile, state_db, verbosity)
     code = _do_render(
         profile_file,
@@ -411,6 +420,7 @@ def render(
     only_profile: _ProfileOpt = None,
     allow_remote_images: _RemoteOpt = False,
     jobs: _JobsOpt = None,
+    log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
@@ -422,7 +432,7 @@ def render(
     its own name. Needs no ``.env``.
     """
     verbosity = _verbosity(silent, verbose, debug)
-    setup_logging(verbosity)
+    setup_logging(verbosity, log_file)
     code = _do_render(
         profile_file,
         only_profile,
@@ -444,6 +454,7 @@ def eml(
     ] = None,
     name: _NameOpt = "mail",
     jobs: _JobsOpt = None,
+    log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
@@ -463,7 +474,7 @@ def eml(
     that this fetches tracking pixels too.
     """
     verbosity = _verbosity(silent, verbose, debug)
-    setup_logging(verbosity)
+    setup_logging(verbosity, log_file)
     try:
         files = collect_eml(list(paths or []))
     except SourceError as exc:
@@ -569,6 +580,7 @@ def fetch(
     state_db: _StateOpt = None,
     dry_run: _DryRunOpt = False,
     no_server_actions: _NoServerActionsOpt = False,
+    log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
@@ -581,7 +593,7 @@ def fetch(
     and delete; useful for a first run with a profile that deletes.
     """
     verbosity = _verbosity(silent, verbose, debug)
-    setup_logging(verbosity)
+    setup_logging(verbosity, log_file)
     _do_fetch(
         env_file,
         profile_file,
