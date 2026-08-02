@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.7] - 2026-08-02
+
 ### Fixed
 - **The same mail delivered twice produced two PDF folders.** `_resolve_output()`
   checked its in-flight reservations before the manifest, and those reservations
