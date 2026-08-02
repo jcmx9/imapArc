@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **`imaparc doctor`** checks an installation in one go: gs/qpdf/verapdf on PATH,
+  a Chromium build matching the installed Playwright, the sRGB ICC profile,
+  `profile.yaml`, `.env` completeness, the Finder action, and an actual IMAP login
+  per account (`--offline` skips those). Exits 1 on a failure so it works from
+  cron; a missing config is a warning, not a failure — a fresh install has none.
+
+  It checks the Chromium **revision**, not merely that some build is present:
+  `playwright install` removes outdated builds, so a project venv and a uv-tool
+  install with different Playwright versions evict each other's browser and leave
+  a cache that looks populated. That exact failure cost real time to diagnose.
+  The revision comes from Playwright's `browsers.json` rather than from launching
+  a browser — faster, and no asyncio teardown noise on a diagnosis screen.
+
+### Added
 - **`imaparc fetch --dry-run`** reports which mail each profile would take and
   what would happen to it on the server, and writes **nothing**: no `.eml`, no
   state entry, no server call. `after_fetch: delete` is irreversible and could

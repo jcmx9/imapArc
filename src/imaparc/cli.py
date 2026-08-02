@@ -20,6 +20,8 @@ from imaparc.accounts import ConfigError, load_accounts
 from imaparc.adhoc import collect_eml, run_adhoc
 from imaparc.bootstrap import init_config, profile_block, render_profiles_file
 from imaparc.config import ToolPaths
+from imaparc.console import console
+from imaparc.doctor import Status, exit_code, run_checks
 from imaparc.exceptions import ImapArcError, SourceError, ToolNotFoundError
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
@@ -490,6 +492,41 @@ def eml(
         _abort()
     if verbosity > 0:
         typer.echo(report.summary())
+
+
+@app.command()
+def doctor(
+    env_file: _EnvOpt = DEFAULT_ENV,
+    profile_file: _ProfilesOpt = DEFAULT_PROFILES,
+    offline: Annotated[
+        bool,
+        typer.Option("--offline", help="Skip the IMAP logins (no network access)."),
+    ] = False,
+) -> None:
+    """Check the installation: tools, browser, config, credentials.
+
+    Exits 1 if anything is broken, so it is usable from cron or CI. A missing
+    config counts as a warning, not a failure — a fresh install has none yet.
+    """
+    checks = run_checks(env_file=env_file, profile_file=profile_file, offline=offline)
+    marks = {
+        Status.OK: "[green]✓[/]",
+        Status.WARN: "[yellow]![/]",
+        Status.FAIL: "[red]✗[/]",
+    }
+    for check in checks:
+        console.print(f"{marks[check.status]} {check.name:<14} {check.detail}")
+
+    failed = [c for c in checks if c.status is Status.FAIL]
+    warned = [c for c in checks if c.status is Status.WARN]
+    console.print()
+    if failed:
+        console.print(f"[red]{len(failed)} problem(s) found[/]")
+    elif warned:
+        console.print(f"{len(warned)} note(s), nothing broken")
+    else:
+        console.print("[green]all good[/]")
+    raise typer.Exit(exit_code(checks))
 
 
 @app.command(name="install-service")

@@ -177,6 +177,7 @@ imaparc sync-profiles    # rewrite an existing profile.yaml to the full format (
 imaparc reset            # clear delivery state → next fetch re-processes everything
 imaparc eml              # render loose .eml files, with no profile at all
 imaparc install-service  # add the Finder right-click action
+imaparc doctor           # check the install: tools, browser, config, login
 
 imaparc all --profile hetzner    # restrict any mode to one profile
 imaparc fetch --profile hetzner
@@ -245,6 +246,8 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 | `eml` | `--name`, `-n` | Name segment in the generated file names (default `mail`) |
 | `eml` | `--jobs`, `-j` | Parallel renders |
 | `install-service` | `--name`, `-n` | Name segment the right-click entry uses |
+| `doctor` | `--offline` | Skip the IMAP logins (no network access) |
+| `doctor` | `--env`, `--profiles` | Config files to inspect |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
 
 ## Development
