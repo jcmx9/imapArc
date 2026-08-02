@@ -96,3 +96,21 @@ def test_render_command_end_to_end(tmp_path: Path) -> None:
     again = runner.invoke(app, ["render", "--profiles", str(profiles)])
     assert again.exit_code == 0
     assert len(sorted(p for p in (output / "pdf").iterdir() if p.is_dir())) == 2
+
+
+# --- timestamp fallback (moved here with the render orchestration) ----------
+
+
+def test_received_returns_none_for_missing_file(tmp_path: Path) -> None:
+    from imaparc.render_run import received_from_file
+
+    assert received_from_file(tmp_path / "gone.eml") is None
+
+
+def test_received_reads_mtime(tmp_path: Path) -> None:
+    from imaparc.render_run import received_from_file
+
+    path = tmp_path / "mail.eml"
+    path.write_bytes(b"x")
+
+    assert received_from_file(path) is not None

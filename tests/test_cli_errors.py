@@ -248,17 +248,6 @@ def test_fetch_interrupted_exits_130(
 # --- misc helpers ---------------------------------------------------------
 
 
-def test_received_returns_none_for_missing_file(tmp_path: Path) -> None:
-    assert cli._received(str(tmp_path / "gone.eml")) is None
-
-
-def test_received_reads_mtime(tmp_path: Path) -> None:
-    path = tmp_path / "mail.eml"
-    path.write_bytes(b"x")
-    received = cli._received(str(path))
-    assert received is not None
-
-
 def test_init_creates_then_keeps_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -120,6 +120,7 @@ async def run_adhoc(
     name: str,
     tools: ToolPaths,
     jobs: int = 4,
+    gs_jobs: int = 2,
     verbosity: int = 1,
 ) -> RunReport:
     """Render loose ``.eml`` files in place, then move each into its folder.
@@ -144,6 +145,8 @@ async def run_adhoc(
         name: Fills the profile slot of the base name.
         tools: Resolved gs/qpdf/verapdf paths.
         jobs: Mails rendered concurrently.
+        gs_jobs: Ghostscript conversions at once. Deliberately lower than
+            ``jobs``: one conversion holds a whole document in memory.
         verbosity: 0 silences the progress display.
 
     Returns:
@@ -159,8 +162,17 @@ async def run_adhoc(
     for directory in by_directory:
         sweep_staging(directory)
 
-    config = RunConfig(tools=tools, verbosity=verbosity, jobs=jobs, allow_remote=True)
+    config = RunConfig(
+        tools=tools,
+        verbosity=verbosity,
+        jobs=jobs,
+        gs_jobs=gs_jobs,
+        allow_remote=True,
+    )
     semaphore = asyncio.Semaphore(config.jobs)
+    # Separate from `semaphore`: Ghostscript holds a whole document in memory,
+    # so it needs a tighter bound than the number of mails rendered at once.
+    gs_semaphore = asyncio.Semaphore(config.gs_jobs)
 
     with make_progress(disable=verbosity == 0) as progress:
         task = progress.add_task("Rendering mail", total=len(files))
@@ -182,6 +194,7 @@ async def run_adhoc(
                             config=config,
                             received=_received(eml),
                             claimed=claimed[eml.parent],
+                            gs_semaphore=gs_semaphore,
                         )
                     except (ImapArcError, OSError) as exc:
                         # One unreadable mail must not abort the whole run.

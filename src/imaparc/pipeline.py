@@ -94,6 +94,7 @@ async def render_mail(
     config: RunConfig,
     received: datetime | None = None,
     claimed: set[str] | None = None,
+    gs_semaphore: asyncio.Semaphore | None = None,
 ) -> RenderResult:
     """Render one mail to the double PDF structure under ``output_dir``.
 
@@ -106,7 +107,15 @@ async def render_mail(
     (identical ``Date`` header and subject); passing one set across all of a
     profile's concurrent renders makes the name reservation race-free, so the
     second mail disambiguates instead of colliding on the output path.
+
+    ``gs_semaphore`` caps how many Ghostscript conversions run at once. It is
+    shared across the run like ``claimed``, because Ghostscript is the
+    memory-hungry step and needs a tighter bound than ``config.jobs`` — one
+    conversion holds the whole document in memory. Without it, peak memory
+    scales with render concurrency.
     """
+    if gs_semaphore is None:
+        gs_semaphore = asyncio.Semaphore(config.gs_jobs)
     timestamp = parsed.headers.date or received
     base = build_base_name(
         timestamp,
@@ -135,13 +144,15 @@ async def render_mail(
         # body + attachment pages; without, just the body. The body-only version
         # is written alongside as <basename>_mailonly.pdf only when it differs
         # (i.e. only when there are attachments).
-        mail_only_pdfa = await asyncio.to_thread(
-            _merge_to_pdfa, mail_part, work / "mailonly", config
-        )
-        if has_attachments:
-            primary_pdfa = await asyncio.to_thread(
-                _merge_to_pdfa, mail_part + attachment_pages, work / "full", config
+        async with gs_semaphore:
+            mail_only_pdfa = await asyncio.to_thread(
+                _merge_to_pdfa, mail_part, work / "mailonly", config
             )
+        if has_attachments:
+            async with gs_semaphore:
+                primary_pdfa = await asyncio.to_thread(
+                    _merge_to_pdfa, mail_part + attachment_pages, work / "full", config
+                )
             mailonly_pdfa: bytes | None = mail_only_pdfa
         else:
             primary_pdfa = mail_only_pdfa
