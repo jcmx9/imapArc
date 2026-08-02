@@ -697,6 +697,7 @@ def _do_fetch(
             accounts,
             profiles,
             StateStore(state_db or DEFAULT_STATE),
+            verbosity=verbosity,
             dry_run=dry_run,
             no_server_actions=no_server_actions,
         )

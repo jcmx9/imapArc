@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import smtplib
 import socket
@@ -964,3 +965,107 @@ def test_dry_run_against_a_live_server_changes_nothing(tmp_path: Path) -> None:
     _typ, data = box.search(None, "ALL")
     box.logout()
     assert len(data[0].split()) == 1, "dry run must not have deleted the mail"
+
+
+# --- per-mail output and progress -------------------------------------------
+
+
+def test_verbose_logs_a_line_per_archived_mail(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """At -v you want to watch mails go by, not just a final count."""
+    from imaparc.fetch import _fetch_folder
+    from imaparc.state import StateStore
+
+    with caplog.at_level(logging.INFO, logger="imaparc.fetch"):
+        _fetch_folder(
+            _RecordingConn(_kanzlei_msg(1)),  # type: ignore[arg-type]
+            "acc",
+            "INBOX",
+            [_plain_profile(tmp_path / "out")],  # type: ignore[list-item]
+            StateStore(tmp_path / "state.db"),
+            FetchReport(),
+        )
+
+    archived = [r for r in caplog.records if "Sache" in r.getMessage()]
+    assert archived, "no per-mail line was logged"
+    assert archived[0].levelno == logging.INFO
+
+
+def test_debug_adds_the_details_for_one_mail(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """At -vv the same mail carries folder, UID and size for diagnosis."""
+    from imaparc.fetch import _fetch_folder
+    from imaparc.state import StateStore
+
+    with caplog.at_level(logging.DEBUG, logger="imaparc.fetch"):
+        _fetch_folder(
+            _RecordingConn(_kanzlei_msg(42)),  # type: ignore[arg-type]
+            "acc",
+            "INBOX",
+            [_plain_profile(tmp_path / "out")],  # type: ignore[list-item]
+            StateStore(tmp_path / "state.db"),
+            FetchReport(),
+        )
+
+    debug = " ".join(
+        r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG
+    )
+    assert "42" in debug  # the UID
+    assert "INBOX" in debug
+
+
+def test_fetch_reports_progress_over_all_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long fetch must show how far along it is, not just sit there.
+
+    The bar is driven from run_fetch because only it knows the whole set of
+    folders; _fetch_folder advances it per candidate.
+    """
+    from imaparc.fetch import run_fetch
+    from imaparc.state import StateStore
+
+    advanced: list[int] = []
+
+    class _SpyProgress:
+        def __enter__(self) -> _SpyProgress:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def add_task(self, description: str, total: int | None = None) -> int:
+            return 1
+
+        def advance(self, task: int, amount: int = 1) -> None:
+            advanced.append(amount)
+
+        def update(self, task: int, **kwargs: object) -> None:
+            return None
+
+    monkeypatch.setattr("imaparc.fetch.make_progress", lambda **_kw: _SpyProgress())
+
+    class _WithCandidates(_AccountConn):
+        def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+            self.scanned.append(folder)
+            return 1, [_kanzlei_msg(1), _kanzlei_msg(2)]
+
+        def fetch_body(self, folder: str, uid: int) -> bytes:
+            from tests.mail_builder import build_mail
+
+            return build_mail(from_="anwalt@kanzlei.de", subject="Sache")
+
+    conn = _WithCandidates(["INBOX", "INBOX.Sub"])
+    monkeypatch.setattr("imaparc.fetch.ImapConnection", lambda _account: conn)
+
+    run_fetch(
+        {"a": _account()},  # type: ignore[dict-item]
+        [_plain_profile(tmp_path / "out")],  # type: ignore[list-item]
+        StateStore(tmp_path / "state.db"),
+    )
+
+    # A non-recursive profile scans INBOX only, so the two candidates there are
+    # what moves the bar — one step each.
+    assert len(advanced) == 2, f"progress advanced {len(advanced)} times, expected 2"

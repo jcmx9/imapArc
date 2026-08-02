@@ -16,9 +16,12 @@ from rich.logging import RichHandler
 
 from imaparc.console import console
 
+# Level 1 shows only the progress bars and the closing summary — the per-mail
+# INFO lines start at -v, which is what separates "watch it work" from "wait for
+# it". Before this, 1 and 2 were both INFO and -v changed nothing on screen.
 _CONSOLE_LEVEL = {
     0: logging.CRITICAL + 1,
-    1: logging.INFO,
+    1: logging.WARNING,
     2: logging.INFO,
     3: logging.DEBUG,
 }
