@@ -27,11 +27,21 @@ def _restore_logging() -> Iterator[None]:
         root.addHandler(handler)
 
 
-@pytest.mark.parametrize("command", ["fetch", "render", "eml"])
+@pytest.mark.parametrize("command", ["all", "fetch", "render", "eml"])
 def test_every_run_command_accepts_a_log_file(command: str) -> None:
-    result = runner.invoke(app, [command, "--help"])
+    """Inspect the registered options rather than the rendered help.
 
-    assert "--log-file" in result.output
+    Parsing --help ties the test to the terminal width: at 80 columns the option
+    name wraps and the substring is simply not there, which is how this passed
+    locally and failed in CI.
+    """
+    import typer.main
+
+    group = typer.main.get_command(app)
+    params = group.commands[command].params  # type: ignore[attr-defined]
+    options = {opt for param in params for opt in param.opts}
+
+    assert "--log-file" in options
 
 
 def test_log_file_is_written_even_when_silent(tmp_path: Path) -> None:
