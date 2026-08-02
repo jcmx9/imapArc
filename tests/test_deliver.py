@@ -65,3 +65,43 @@ def test_delivery_leaves_no_temp_files(tmp_path: Path) -> None:
     eml = tmp_path / "eml"
     deliver_eml(eml, build_mail(), "base")
     assert sorted(p.name for p in eml.iterdir()) == ["base.eml"]
+
+
+# --- a byte-identical redelivery is not a new file --------------------------
+
+
+def test_identical_content_reuses_the_existing_file(tmp_path: Path) -> None:
+    """Never-overwrite guards against *loss*; identical bytes lose nothing.
+
+    The same mail can legitimately arrive twice: Gmail lists one message in All
+    Mail and in its label folder, and a mail uploaded back to the server returns
+    under a fresh UID. Writing a `-2` copy of identical bytes is pure redundancy.
+    """
+    raw = b"From: a@b\r\nSubject: x\r\n\r\nbody"
+
+    first = deliver_eml(tmp_path, raw, "mail")
+    second = deliver_eml(tmp_path, raw, "mail")
+
+    assert second == first
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["mail.eml"]
+
+
+def test_different_content_still_disambiguates(tmp_path: Path) -> None:
+    """The invariant that must not regress: distinct mail is never overwritten."""
+    first = deliver_eml(tmp_path, b"one", "mail")
+    second = deliver_eml(tmp_path, b"two", "mail")
+
+    assert first != second
+    assert first.read_bytes() == b"one"
+    assert second.read_bytes() == b"two"
+
+
+def test_identical_check_walks_the_disambiguated_chain(tmp_path: Path) -> None:
+    """A copy may already sit at `-2`; that one counts as existing too."""
+    deliver_eml(tmp_path, b"one", "mail")
+    second = deliver_eml(tmp_path, b"two", "mail")  # → mail-2.eml
+
+    again = deliver_eml(tmp_path, b"two", "mail")
+
+    assert again == second
+    assert len(list(tmp_path.iterdir())) == 2

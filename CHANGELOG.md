@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **A byte-identical redelivery no longer writes a second `.eml`.**
+  `deliver_eml()` reuses the existing file instead of adding `…-2`.
+  Never-overwrite exists to prevent *loss*; identical bytes lose nothing, so the
+  copy was pure redundancy. One mail legitimately arrives twice — Gmail lists a
+  message in All Mail *and* in its label folder, and a mail uploaded back to the
+  server returns under a fresh UID. Content differing by even one byte still
+  disambiguates exactly as before. Size is checked before content, so a large
+  message is not read off disk without reason.
+
 ## [26.8.9] - 2026-08-02
 
 ### Added
