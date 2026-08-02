@@ -62,13 +62,16 @@ def _fields_set_by_callers() -> set[str]:
 
 
 def _fields_read() -> set[str]:
-    """Attribute names read off anything called ``config``/``cfg``/``self``."""
+    """Attribute names read off anything called ``config``/``cfg``/``run_config``."""
     found: set[str] = set()
     for _path, tree in _modules():
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                if node.value.id in {"config", "cfg", "run_config"}:
-                    found.add(node.attr)
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in {"config", "cfg", "run_config"}
+            ):
+                found.add(node.attr)
     return found
 
 
