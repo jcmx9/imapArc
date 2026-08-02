@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **`imaparc fetch --dry-run`** reports which mail each profile would take and
+  what would happen to it on the server, and writes **nothing**: no `.eml`, no
+  state entry, no server call. `after_fetch: delete` is irreversible and could
+  previously only be checked by running it. Verified against a live GreenMail with
+  a deleting profile — the mail is still there afterwards.
+- **`imaparc fetch --no-server-actions`** archives as usual but suppresses every
+  label, move and delete, for a first run with a new profile.
+
+### Added
 - **Naming scheme and safety limits are configurable per profile.**
   `filename_pattern` and `date_format` shape the base name (placeholders `{date}`,
   `{profile}`, `{subject}`; date tokens `YYYY MM DD hh mm ss`), and `gs_jobs`,
