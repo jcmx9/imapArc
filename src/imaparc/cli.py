@@ -7,35 +7,26 @@ import logging
 import os
 import re
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
 import yaml
 from rich.console import Console
-from rich.progress import Progress, TaskID
 from rich.table import Table
 
 from imaparc import __version__
 from imaparc.accounts import ConfigError, load_accounts
 from imaparc.adhoc import collect_eml, run_adhoc
 from imaparc.bootstrap import init_config, profile_block, render_profiles_file
-from imaparc.config import RunConfig, ToolPaths
-from imaparc.console import make_progress
+from imaparc.config import ToolPaths
 from imaparc.exceptions import ImapArcError, SourceError, ToolNotFoundError
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
-from imaparc.mail.parser import parse_mail
-from imaparc.pipeline import RenderResult, render_mail, sweep_staging
 from imaparc.profiles import Profile, load_profiles
-from imaparc.render.browser import BrowserPool
-from imaparc.report import RunReport, validate_pdfa
+from imaparc.render_run import run_render
 from imaparc.service import SERVICES_DIR, install_quick_action
-from imaparc.sources.base import RawMail
-from imaparc.sources.eml import EmlSource
 from imaparc.state import StateStore
-from imaparc.storage import DIR_MODE, make_dir
 
 logger = logging.getLogger(__name__)
 
@@ -623,7 +614,7 @@ def _do_render(
 
     try:
         report = asyncio.run(
-            _run_render(targets, tools, allow_remote_images, jobs, verbosity)
+            run_render(targets, tools, allow_remote_images, jobs, verbosity)
         )
     except KeyboardInterrupt:
         _abort()
@@ -632,124 +623,3 @@ def _do_render(
     # Non-conformant PDF/A is reported (see summary), never fatal: the .eml is the
     # guarantee and the PDF a best-effort rendition — the run always succeeds.
     return 0
-
-
-def _received(source_id: str) -> datetime | None:
-    """Delivery time (eml file mtime) — the timestamp fallback."""
-    try:
-        return datetime.fromtimestamp(Path(source_id).stat().st_mtime, tz=UTC)
-    except OSError:
-        return None
-
-
-async def _run_render(
-    profiles: list[Profile],
-    tools: ToolPaths,
-    cli_remote: bool,
-    cli_jobs: int | None,
-    verbosity: int,
-) -> RunReport:
-    """Render each profile's eml/ with its own settings; then validate.
-
-    ``remote_images``/``jobs`` are per-profile; the CLI flags override them for
-    the whole run. Each profile gets its own :class:`BrowserPool`
-    and concurrency, so a profile that does not want remote images keeps the full
-    network lockdown even when another profile in the same run does.
-
-    Every mail is listed up front so the progress bar knows its total from the
-    start; a second bar tracks PDF/A validation.
-    """
-    report = RunReport()
-    plans: list[tuple[Profile, RunConfig, Path, list[RawMail]]] = []
-    for profile in profiles:
-        eml_dir = profile.output / "eml"
-        if not eml_dir.is_dir():
-            logger.warning(
-                "profile '%s': no eml/ at %s — run fetch first", profile.name, eml_dir
-            )
-            continue
-        jobs = cli_jobs if cli_jobs is not None else profile.jobs
-        config = RunConfig(
-            tools=tools,
-            verbosity=verbosity,
-            jobs=jobs,
-            allow_remote=cli_remote or profile.remote_images,
-        )
-        mails = list(EmlSource(eml_dir))
-        plans.append((profile, config, profile.output / "pdf", mails))
-
-    total = sum(len(mails) for *_, mails in plans)
-    with make_progress(disable=verbosity == 0 or total == 0) as progress:
-        task = progress.add_task("Rendering mail", total=total)
-        for profile, config, output, mails in plans:
-            semaphore = asyncio.Semaphore(config.jobs)
-            async with BrowserPool(
-                allow_remote=config.allow_remote, timeout_ms=config.render_timeout_ms
-            ) as pool:
-                await _render_profile(
-                    profile,
-                    output,
-                    mails,
-                    pool,
-                    semaphore,
-                    config,
-                    report,
-                    progress,
-                    task,
-                )
-        validate_pdfa(report, tools, progress)
-    return report
-
-
-async def _render_profile(
-    profile: Profile,
-    output: Path,
-    mails: list[RawMail],
-    pool: BrowserPool,
-    semaphore: asyncio.Semaphore,
-    config: RunConfig,
-    report: RunReport,
-    progress: Progress,
-    task: TaskID,
-) -> None:
-    """Render every mail in one profile's ``eml/`` into its ``pdf/`` directory."""
-    make_dir(output)
-    os.chmod(output, 0o700)  # owner-writable, private (same as DIR_MODE at rest)
-    sweep_staging(output)  # clear any .staging-* left by a previously aborted run
-
-    # Shared across this profile's concurrent renders so two mails that resolve
-    # to the same basename (same Date header + subject) reserve distinct names
-    # instead of racing on the output path.
-    claimed: set[str] = set()
-
-    async def process(raw: RawMail) -> RenderResult | None:
-        async with semaphore:
-            try:
-                parsed = parse_mail(raw.raw)
-                return await render_mail(
-                    parsed,
-                    profile=profile.name,
-                    output_dir=output,
-                    pool=pool,
-                    config=config,
-                    received=_received(raw.source_id),
-                    claimed=claimed,
-                )
-            except (ImapArcError, OSError) as exc:
-                # One bad mail must not abort the whole profile's render.
-                logger.error("Failed to render %s: %s", raw.source_id, exc)
-                return None
-            finally:
-                progress.advance(task)
-
-    try:
-        results = await asyncio.gather(
-            *(process(m) for m in mails), return_exceptions=True
-        )
-        for result in results:
-            if isinstance(result, RenderResult):
-                report.add(result)
-            elif isinstance(result, BaseException):
-                logger.error("Unexpected error while rendering a mail: %s", result)
-    finally:
-        os.chmod(output, DIR_MODE)  # immutable at rest

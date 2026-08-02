@@ -327,3 +327,56 @@ async def test_remote_images_are_always_loaded(tmp_path: Path) -> None:
         server.server_close()
 
     assert "/pixel.png" in requested
+
+
+# --- gs_jobs actually caps Ghostscript --------------------------------------
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_ghostscript_runs_are_capped_below_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ghostscript is the memory-hungry step, so it is capped separately.
+
+    Fails without the semaphore: the conversions then run at `jobs` concurrency
+    and peak memory scales with render parallelism instead of with gs_jobs.
+    """
+    import threading
+    import time
+
+    from imaparc import pipeline
+
+    real_merge = pipeline._merge_to_pdfa
+    live = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def _counting_merge(pages: object, stem: object, config: object) -> bytes:
+        nonlocal live, peak
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.05)  # hold the slot so siblings would pile up
+        try:
+            return real_merge(pages, stem, config)  # type: ignore[arg-type]
+        finally:
+            with lock:
+                live -= 1
+
+    monkeypatch.setattr(pipeline, "_merge_to_pdfa", _counting_merge)
+
+    for i in range(6):
+        _eml(tmp_path / f"m{i}.eml", subject=f"Mail {i}")
+
+    await run_adhoc(
+        collect_eml([tmp_path]),
+        name="mail",
+        tools=ToolPaths.resolve(),
+        jobs=6,
+        gs_jobs=2,
+        verbosity=0,
+    )
+
+    assert peak <= 2, f"{peak} Ghostscript runs at once, gs_jobs was 2"

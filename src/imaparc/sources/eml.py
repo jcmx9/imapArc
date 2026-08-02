@@ -33,11 +33,19 @@ class EmlSource:
         if not eml_dir.is_dir():
             raise SourceError(f"Not an eml directory: {eml_dir}")
 
-    def __iter__(self) -> Iterator[RawMail]:
-        entries = sorted(
+    def paths(self) -> list[Path]:
+        """The ``.eml`` files in basename order, **without reading them**.
+
+        A render run needs the count up front (for the progress bar) but not the
+        contents — reading every mail eagerly made peak memory scale with the
+        size of the archive rather than with concurrency.
+        """
+        return sorted(
             entry
             for entry in self._path.iterdir()
             if entry.is_file() and entry.suffix == ".eml"
         )
-        for entry in entries:
+
+    def __iter__(self) -> Iterator[RawMail]:
+        for entry in self.paths():
             yield RawMail(raw=entry.read_bytes(), source_id=str(entry))

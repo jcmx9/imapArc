@@ -5,6 +5,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **`gs_jobs` now does what it says.** The field existed in `config.py` and in two
+  sentences of the documentation, but was never read: Ghostscript ran through
+  `asyncio.to_thread` with no bound of its own, i.e. at up to `jobs` conversions
+  at once instead of the promised 2. Since one conversion holds a whole document
+  in memory, peak memory scaled with render concurrency. The render orchestrators
+  now hand `render_mail()` a shared semaphore, the same way they already share the
+  `claimed` name-reservation set. A test drives six mails at `jobs=6, gs_jobs=2`
+  and asserts that no more than two conversions are ever in flight.
+- **A render run no longer loads the whole archive into memory.** It listed every
+  mail's *contents* up front so the progress bar could show a total — for 10 000
+  mails at 200 KB that is 2 GB before the first page is rendered. `EmlSource` grew
+  a `paths()` method that lists without reading; each mail is read when its turn
+  comes, so only `jobs` messages are resident at any moment. This is the pattern
+  `adhoc.py` already used.
+
+### Changed
+- Render orchestration moved out of `cli.py` into a new `render_run.py`, next to
+  the equivalents for the other two phases (`fetch.py`, `adhoc.py`). `cli.py`
+  shrinks from 755 to 634 lines and now contains commands only.
+
 ### Removed
 - **Dead configuration.** `RunConfig.overwrite` and `RunConfig.validate_pdfa` were
   never set and never read. Both advertised options that must not exist:
