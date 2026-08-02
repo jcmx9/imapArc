@@ -93,7 +93,7 @@ async def render_mail(
     pool: BrowserPool,
     config: RunConfig,
     received: datetime | None = None,
-    claimed: set[str] | None = None,
+    claimed: dict[str, str] | None = None,
     gs_semaphore: asyncio.Semaphore | None = None,
 ) -> RenderResult:
     """Render one mail to the double PDF structure under ``output_dir``.
@@ -102,11 +102,11 @@ async def render_mail(
     Returns a :class:`RenderResult`; skips (does nothing) if the output already
     exists, which makes a repeat run idempotent.
 
-    ``claimed`` is a shared set of basenames already reserved by concurrent
-    renders in the same run. Two distinct mails can resolve to the same base
-    (identical ``Date`` header and subject); passing one set across all of a
-    profile's concurrent renders makes the name reservation race-free, so the
-    second mail disambiguates instead of colliding on the output path.
+    ``claimed`` maps basenames reserved by concurrent renders in this run to the
+    mail each belongs to. Sharing one mapping across a profile's renders makes
+    the reservation race-free: a *different* mail resolving to the same base
+    disambiguates, while a second copy of the *same* mail skips instead of
+    producing a duplicate folder.
 
     ``gs_semaphore`` caps how many Ghostscript conversions run at once. It is
     shared across the run like ``claimed``, because Ghostscript is the
@@ -197,7 +197,7 @@ def _read_identity(subfolder: Path) -> str | None:
 
 
 def _resolve_output(
-    output_dir: Path, base: str, identity: str, claimed: set[str] | None = None
+    output_dir: Path, base: str, identity: str, claimed: dict[str, str] | None = None
 ) -> tuple[str, bool]:
     """Pick the per-mail folder name to write under and whether to skip.
 
@@ -206,31 +206,40 @@ def _resolve_output(
     presence means the mail is fully written; there is no half-written folder to
     repair.
 
-    - A basename already reserved by a concurrent render in this run
-      (``candidate in claimed``) → disambiguate, so two mails that resolve to the
-      same base never race on the output path.
+    - A name reserved in this run **by the same mail** → skip; the sibling render
+      is already producing that folder.
+    - A name reserved by a *different* mail → disambiguate, so the two never race
+      on the output path.
     - An existing folder whose manifest matches this mail → skip (idempotent).
     - An existing folder belonging to a *different* mail (or with an unreadable
       manifest) → try ``base-2``, ``base-3``, … so neither is overwritten.
 
-    A returned non-skip basename is added to ``claimed`` before returning — with
-    no ``await`` between here and the write, that reservation is atomic within
-    the event loop.
+    ``claimed`` maps reserved name → mail identity. It has to carry the identity,
+    not just the name: with a plain set, a second copy of one mail saw "name
+    taken" and silently took ``-2``, leaving a duplicate folder that every later
+    run then skips. Two UIDs for one message are ordinary — Gmail lists the same
+    mail in All Mail and in a label folder, and a re-uploaded mail comes back
+    with a fresh UID.
+
+    A returned non-skip basename is reserved before returning — with no ``await``
+    between here and the write, that reservation is atomic within the event loop.
     """
     if claimed is None:
-        claimed = set()
+        claimed = {}
     candidate = base
     counter = 1
     while True:
         subfolder = output_dir / candidate
         if candidate in claimed:
-            pass  # reserved by an in-flight sibling render — disambiguate
+            if claimed[candidate] == identity:
+                return candidate, True  # same mail, a sibling render has it
+            # A different mail holds the name — disambiguate.
         elif subfolder.exists():
             if _read_identity(subfolder) == identity:
                 return candidate, True
             # A different mail (or corrupt folder) owns this name — disambiguate.
         else:
-            claimed.add(candidate)
+            claimed[candidate] = identity
             return candidate, False
         counter += 1
         candidate = f"{base}-{counter}"

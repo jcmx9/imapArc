@@ -157,14 +157,16 @@ def test_resolve_output_reserves_basename_for_concurrent_renders(
     tmp_path: Path,
 ) -> None:
     # Two distinct mails resolving to the same base (identical Date + subject)
-    # must get distinct names when a shared `claimed` set is threaded through,
-    # even though nothing has been written to disk yet.
-    claimed: set[str] = set()
+    # must get distinct names when a shared `claimed` mapping is threaded
+    # through, even though nothing has been written to disk yet.
+    claimed: dict[str, str] = {}
     first = _resolve_output(tmp_path, "m", "id-a", claimed)
     second = _resolve_output(tmp_path, "m", "id-b", claimed)
     assert first == ("m", False)
     assert second == ("m-2", False)
-    assert claimed == {"m", "m-2"}
+    # The mapping records which mail holds which name — that is what lets a
+    # second copy of one mail skip instead of taking yet another name.
+    assert claimed == {"m": "id-a", "m-2": "id-b"}
 
 
 def test_resolve_output_disambiguates_different_mail(tmp_path: Path) -> None:
@@ -327,3 +329,39 @@ def test_attachment_name_cannot_reach_the_parent_directory(tmp_path: Path) -> No
     for evil in ("..", ".", "../..", "../"):
         target = (folder / _safe_attachment_name(evil)).resolve()
         assert target.parent == folder.resolve(), f"{evil!r} escaped to {target}"
+
+
+# --- the same mail twice in one run must yield one folder -------------------
+
+
+def test_same_mail_reserved_twice_in_one_run_is_skipped() -> None:
+    """Two copies of one mail (same Message-ID) must not become two folders.
+
+    `claimed` used to hold names only, so the second copy saw "name taken" and
+    disambiguated to `-2` without ever consulting the identity — leaving a
+    duplicate folder that a later run then skips forever.
+
+    Real trigger: Gmail lists the same message in All Mail *and* in a label
+    folder, with two UIDs, so a recursive scan delivers it twice.
+    """
+    from imaparc.pipeline import _resolve_output
+
+    claimed: dict[str, str] = {}
+    first, skip_first = _resolve_output(Path("/out"), "base", "<same@id>", claimed)
+    second, skip_second = _resolve_output(Path("/out"), "base", "<same@id>", claimed)
+
+    assert (first, skip_first) == ("base", False)
+    assert skip_second is True, "the second copy must skip, not take another name"
+    assert second == "base"
+
+
+def test_a_different_mail_still_disambiguates() -> None:
+    """The behaviour that must not regress: distinct mails keep distinct names."""
+    from imaparc.pipeline import _resolve_output
+
+    claimed: dict[str, str] = {}
+    first, _ = _resolve_output(Path("/out"), "base", "<one@id>", claimed)
+    second, skip = _resolve_output(Path("/out"), "base", "<other@id>", claimed)
+
+    assert first == "base"
+    assert (second, skip) == ("base-2", False)

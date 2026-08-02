@@ -380,3 +380,27 @@ async def test_ghostscript_runs_are_capped_below_jobs(
     )
 
     assert peak <= 2, f"{peak} Ghostscript runs at once, gs_jobs was 2"
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_two_copies_of_one_mail_produce_one_folder(tmp_path: Path) -> None:
+    """Two files, one Message-ID — the archive must hold a single folder.
+
+    Happens without any user error: Gmail lists a message in All Mail *and* in
+    its label folder (two UIDs), and a mail uploaded back to the server returns
+    with a fresh UID. Both deliver the same mail twice into one render run.
+    """
+    body = build_mail(subject="Az 4711", message_id="<the-same@example.com>")
+    (tmp_path / "copy-a.eml").write_bytes(body)
+    (tmp_path / "copy-b.eml").write_bytes(body)
+
+    report = await run_adhoc(
+        collect_eml([tmp_path]), name="mail", tools=ToolPaths.resolve(), verbosity=0
+    )
+
+    folders = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert len(folders) == 1, f"one mail became {len(folders)} folders: {folders}"
+    assert len(report.written) == 1
+    assert len(report.skipped) == 1
