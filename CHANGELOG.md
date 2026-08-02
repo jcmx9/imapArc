@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.10] - 2026-08-02
+
 ### Changed
 - **A byte-identical redelivery no longer writes a second `.eml`.**
   `deliver_eml()` reuses the existing file instead of adding `…-2`.
