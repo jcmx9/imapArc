@@ -17,8 +17,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 
+from rich.progress import Progress, TaskID
+
 from imaparc.accounts import Account
+from imaparc.console import make_progress
 from imaparc.exceptions import ImapArcError
+from imaparc.humanize import format_file_size
 from imaparc.mail.parser import parse_mail
 from imaparc.naming import build_base_name
 from imaparc.profiles import Profile, attachments_match, matches
@@ -104,6 +108,7 @@ def run_fetch(
     profiles: list[Profile],
     state: StateStore,
     *,
+    verbosity: int = 1,
     dry_run: bool = False,
     no_server_actions: bool = False,
 ) -> FetchReport:
@@ -113,12 +118,46 @@ def run_fetch(
     server call. ``no_server_actions`` archives as usual but suppresses every
     label/move/delete — useful for a first run with a new profile, where
     ``after_fetch: delete`` is otherwise irreversible.
+
+    ``verbosity`` 0 hides the progress bar; the per-mail log lines are governed
+    by the logging setup, not here.
     """
     report = FetchReport()
     by_account: dict[str, list[Profile]] = defaultdict(list)
     for profile in profiles:
         by_account[profile.account.lower()].append(profile)
 
+    # The bar lives here because only this level sees every account and folder.
+    # Its total is unknown until each folder has been scanned, so it starts
+    # open-ended and grows as candidates come in — better than no feedback at
+    # all while a slow mailbox is being listed.
+    with make_progress(disable=verbosity == 0) as progress:
+        task = progress.add_task("Scanning mail", total=None)
+        _fetch_accounts(
+            accounts,
+            by_account,
+            state,
+            report,
+            progress,
+            task,
+            dry_run=dry_run,
+            no_server_actions=no_server_actions,
+        )
+    return report
+
+
+def _fetch_accounts(
+    accounts: dict[str, Account],
+    by_account: dict[str, list[Profile]],
+    state: StateStore,
+    report: FetchReport,
+    progress: Progress,
+    task: TaskID,
+    *,
+    dry_run: bool,
+    no_server_actions: bool,
+) -> None:
+    """Walk every account's folders; one bad account must not stop the rest."""
     for account_name, account_profiles in by_account.items():
         account = accounts[account_name]
         try:
@@ -158,6 +197,8 @@ def run_fetch(
                         folder_profiles,
                         state,
                         report,
+                        progress=progress,
+                        task=task,
                         dry_run=dry_run,
                         no_server_actions=no_server_actions,
                     )
@@ -167,7 +208,6 @@ def run_fetch(
             # One bad account (connection reset, protocol error, …) must not
             # abort the others; nothing was recorded, so it retries next run.
             logger.exception("account '%s' failed unexpectedly", account_name)
-    return report
 
 
 def _effective_folders(
@@ -247,6 +287,8 @@ def _fetch_folder(
     state: StateStore,
     report: FetchReport,
     *,
+    progress: Progress | None = None,
+    task: TaskID | None = None,
     dry_run: bool = False,
     no_server_actions: bool = False,
 ) -> None:
@@ -271,11 +313,17 @@ def _fetch_folder(
         )
     else:
         logger.info("scanned %d message(s) in %s", len(candidates), folder)
+    if progress is not None and task is not None:
+        # The total is only knowable folder by folder, so grow it as we go.
+        current = progress.tasks[task].total or 0 if hasattr(progress, "tasks") else 0
+        progress.update(task, total=current + len(candidates))
     # When a profile has a server-side action, re-examine already-delivered mail
     # too: a message still in the folder means its move/delete failed before, and
     # a configured action must be enforced, not silently dropped.
     retry_actions = any(p.after_fetch is not None for p in profiles)
     for message in candidates:
+        if progress is not None and task is not None:
+            progress.advance(task)
         already = message.uid in delivered
         if already and not retry_actions:
             continue
@@ -311,6 +359,19 @@ def _fetch_folder(
                     account_name, folder, uidvalidity, message.uid, eml_path.name
                 )
                 report.add(profile.name)
+                # One line per mail so a long run can be watched, not just
+                # waited out. INFO carries what a person wants to see; the
+                # locating details (folder, UID, size) go to DEBUG.
+                logger.info(
+                    "%s ← %s", profile.name, message.headers.subject or "(no subject)"
+                )
+                logger.debug(
+                    "  %s/%s → %s (%s)",
+                    folder,
+                    message.uid,
+                    eml_path.name,
+                    format_file_size(len(raw)),
+                )
             else:
                 # Re-check the *exact* file recorded for this UID; only fall back
                 # to a reconstructed name for legacy rows written before filenames

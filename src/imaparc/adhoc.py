@@ -200,6 +200,14 @@ async def run_adhoc(
                         # One unreadable mail must not abort the whole run.
                         logger.error("Failed to render %s: %s", eml, exc)
                         return None
+                    else:
+                        # One line per mail at -v so a long run can be watched;
+                        # the locating detail goes to -vv.
+                        if result.skipped:
+                            logger.debug("∘ %s (already rendered)", result.basename)
+                        else:
+                            logger.info("→ %s", eml.name)
+                            logger.debug("  %s", result.basename)
                     finally:
                         progress.advance(task)
                     # After the folder's atomic rename, never before: the mail is

@@ -5,6 +5,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`fetch` shows progress.** It previously ran blind: on a large mailbox over a
+  slow link there was no way to tell it apart from a hang. The bar starts
+  open-ended, because the number of candidates is only knowable folder by folder,
+  and grows as each folder is scanned.
+- **One line per mail at `-v`, details at `-vv`**, in all three phases. `-v` names
+  the mail as it goes by; `-vv` adds what you need to locate it (folder, UID,
+  size on the fetch side; base name and attachment count on the render side).
+
+### Fixed
+- **`-v` used to change nothing on screen.** Console levels 1 and 2 were both
+  `INFO`, so the documented step from "Progress + Summary" to "+ Entscheidungen"
+  did not exist. Level 1 is now `WARNING`: the default stays bars-and-summary and
+  the per-mail lines begin at `-v`, as documented all along.
+
 ## [26.8.8] - 2026-08-02
 
 ### Added

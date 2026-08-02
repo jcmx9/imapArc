@@ -141,7 +141,7 @@ async def _render_profile(
                 # Read here, not when listing: only `jobs` mails are in memory
                 # at any moment, regardless of how large the archive is.
                 parsed = parse_mail(path.read_bytes())
-                return await render_mail(
+                result = await render_mail(
                     parsed,
                     profile=profile.name,
                     output_dir=output,
@@ -151,6 +151,25 @@ async def _render_profile(
                     claimed=claimed,
                     gs_semaphore=gs_semaphore,
                 )
+                # One line per mail at -v so a long run can be watched; the
+                # locating and diagnostic detail goes to -vv.
+                if result.skipped:
+                    logger.debug(
+                        "%s ∘ %s (already rendered)", profile.name, result.basename
+                    )
+                else:
+                    logger.info(
+                        "%s → %s",
+                        profile.name,
+                        parsed.headers.subject or "(no subject)",
+                    )
+                    logger.debug(
+                        "  %s  %d attachment(s)%s",
+                        result.basename,
+                        len(parsed.attachments),
+                        "" if result.complete else ", some kept as originals",
+                    )
+                return result
             except (ImapArcError, OSError) as exc:
                 # One bad mail must not abort the whole profile's render.
                 logger.error("Failed to render %s: %s", path, exc)
