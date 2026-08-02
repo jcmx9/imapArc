@@ -283,6 +283,47 @@ def test_sweep_staging_removes_leftovers_only(tmp_path: Path) -> None:
 
 
 def test_sweep_staging_noop_when_dir_missing(tmp_path: Path) -> None:
+    """A missing output directory is not an error — and must not be created."""
     from imaparc.pipeline import sweep_staging
 
-    sweep_staging(tmp_path / "does-not-exist")  # must not raise
+    missing = tmp_path / "does-not-exist"
+
+    sweep_staging(missing)
+
+    assert not missing.exists()
+
+
+# --- attachment names must not escape the mail's folder ---------------------
+
+
+@pytest.mark.parametrize(
+    ("evil", "expected"),
+    [
+        ("../../etc/passwd", "passwd"),
+        ("/etc/passwd", "passwd"),
+        ("a/../../b", "b"),
+        # These two are the dangerous ones: Path("..").name is ".." — a name,
+        # not a path component — so staging/.. would be the parent directory.
+        ("..", "attachment"),
+        (".", "attachment"),
+        ("", "attachment"),
+        ("   ", "attachment"),
+        ("normal.pdf", "normal.pdf"),
+    ],
+)
+def test_attachment_name_never_leaves_the_folder(evil: str, expected: str) -> None:
+    from imaparc.pipeline import _safe_attachment_name
+
+    assert _safe_attachment_name(evil) == expected
+
+
+def test_attachment_name_cannot_reach_the_parent_directory(tmp_path: Path) -> None:
+    """The concrete failure: joining the result must stay inside the folder."""
+    from imaparc.pipeline import _safe_attachment_name
+
+    folder = tmp_path / "staging"
+    folder.mkdir()
+
+    for evil in ("..", ".", "../..", "../"):
+        target = (folder / _safe_attachment_name(evil)).resolve()
+        assert target.parent == folder.resolve(), f"{evil!r} escaped to {target}"

@@ -5,6 +5,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- **Dead configuration.** `RunConfig.overwrite` and `RunConfig.validate_pdfa` were
+  never set and never read. Both advertised options that must not exist:
+  `overwrite` would contradict the never-overwrite invariant `disambiguate()`
+  enforces, `validate_pdfa: false` the PDF/A guarantee.
+- **Unused dependencies.** `puremagic` was a *runtime* dependency imported nowhere
+  — the magic-byte sniffing in `attachments/classify.py` is hand-written. `syrupy`
+  sat unused in the dev group.
+
+### Fixed
+- **An attachment named `..` is no longer taken at face value.** `Path("..").name`
+  returns `".."` — pathlib treats it as a name, not a path component — so joining
+  it onto the staging folder pointed at the parent directory. Nothing escaped in
+  practice, because `disambiguate()` saw the existing path and made `..-2` of it,
+  but that is a side effect rather than a guarantee, and a mail *sender* picks
+  this string. `.` and `..` are now rejected outright, with a test that walks a
+  mail carrying exactly those attachment names through the pipeline.
+- `test_sweep_staging_noop_when_dir_missing` carried no assertion and could not
+  fail; it now checks that a missing directory is also not created as a side
+  effect.
+
 ## [26.8.5] - 2026-08-01
 
 ### Changed

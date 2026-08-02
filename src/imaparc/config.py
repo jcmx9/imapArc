@@ -80,9 +80,9 @@ class RunConfig(BaseModel):
     icc_profile: Path = Field(default_factory=default_icc_profile)
     verbosity: int = 1
     jobs: int = Field(default=4, ge=1)
+    # Ghostscript is the memory-hungry step, so it is capped separately from
+    # `jobs` — see the semaphore the render orchestrators hand to render_mail().
     gs_jobs: int = Field(default=2, ge=1)
-    validate_pdfa: bool = True
-    overwrite: bool = False
     # Remote images: default off (stripped); opt-in fetches them (see renderer).
     allow_remote: bool = False
     # Per-attachment safety limits.

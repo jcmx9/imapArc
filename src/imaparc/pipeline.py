@@ -253,8 +253,19 @@ def _remove_tree(path: Path) -> None:
 
 
 def _safe_attachment_name(name: str) -> str:
-    """Reduce an attachment name to a safe basename (no path, no control chars)."""
+    """Reduce an attachment name to a safe basename (no path, no control chars).
+
+    ``Path(name).name`` strips directories, but returns ``".."`` unchanged — it
+    is a *name*, not a path component, as far as pathlib is concerned. Joining
+    that onto the staging folder would point at its parent, so the two directory
+    aliases are rejected outright. Nothing currently escapes without this (an
+    existing target is disambiguated to ``..-2``), but that is a side effect of
+    :func:`~imaparc.storage.disambiguate`, not a guarantee — and a mail sender
+    chooses this string, so it must not depend on one.
+    """
     cleaned = _CONTROL_CHARS.sub("", Path(name).name).strip()
+    if cleaned in {".", ".."}:
+        return "attachment"
     return cleaned or "attachment"
 
 
