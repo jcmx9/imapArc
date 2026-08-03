@@ -86,7 +86,9 @@ def restore_files(
             raw = path.read_bytes()
             parsed = parse_mail(raw)
             message_id = parsed.headers.message_id
-            if message_id and conn.contains_message_id(folder, message_id):
+            if message_id and conn.contains_message(
+                folder, message_id, parsed.headers.subject
+            ):
                 logger.info("∘ %s (already on the server)", path.name)
                 results.append(RestoreResult(path, RestoreOutcome.ALREADY_THERE))
                 continue

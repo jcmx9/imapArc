@@ -244,17 +244,32 @@ class ImapConnection:
         raw = data.get(b"BODY[]")
         return raw if isinstance(raw, bytes) else None
 
-    def contains_message_id(self, folder: str, message_id: str) -> bool:
-        """Whether ``folder`` already holds a message with this ``Message-ID``.
+    def contains_message(self, folder: str, message_id: str, subject: str) -> bool:
+        """Whether ``folder`` holds this message, matched on ID *and* subject.
 
-        Used before restoring so a re-run does not add a second copy. The header
-        travels with the mail, unlike the UID, which is exactly what makes it
-        usable for this.
+        The ``Message-ID`` alone is not enough: the sender picks it and nothing
+        enforces the uniqueness RFC 5322 asks for, so two different mails can
+        share one and the second would be mistaken for a copy of the first.
+
+        The subject comes from the ENVELOPE, which the server assembles — no
+        message body is downloaded to answer this. The envelope *date* is
+        deliberately not used: servers return it as a naive timestamp in their
+        own zone (GreenMail reports 11:00 for a mail sent at 10:00+01:00), so
+        comparing it would fail against the archived value on most setups.
         """
         if not self._conn.folder_exists(folder):
             return False
         self._conn.select_folder(folder, readonly=True)
-        return bool(self._conn.search(["HEADER", "Message-ID", message_id]))
+        uids = self._conn.search(["HEADER", "Message-ID", message_id])
+        if not uids:
+            return False
+        for _uid, data in self._conn.fetch(uids, ["ENVELOPE"]).items():
+            env = data.get(b"ENVELOPE")
+            if env is None:  # pragma: no cover - server quirk
+                continue
+            if _decode_mime(env.subject) == subject:
+                return True
+        return False
 
     def append(self, folder: str, raw: bytes, received: datetime | None = None) -> None:
         """Upload a message into ``folder``, creating it if missing.
