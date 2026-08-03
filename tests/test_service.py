@@ -182,3 +182,47 @@ def test_path_entries_are_not_duplicated(
     command = str(_params(tmp_path)["COMMAND_STRING"])
     export_line = next(ln for ln in command.splitlines() if "export PATH=" in ln)
     assert export_line.count("/opt/homebrew/bin") == 1
+
+
+# --- Linux: a Desktop Entry action instead of a Quick Action ----------------
+
+
+def test_linux_action_runs_the_executable_with_all_arguments(tmp_path: Path) -> None:
+    """File managers pass the selection; all of it must reach imaparc."""
+    from imaparc.service import install_desktop_action
+
+    path = install_desktop_action(tmp_path, executable=Path("/opt/bin/imaparc"))
+
+    body = path.read_text(encoding="utf-8")
+    assert "Exec=" in body
+    assert "/opt/bin/imaparc" in body
+    assert "%F" in body  # every selected file, not just the first (%f)
+
+
+def test_linux_action_is_offered_for_eml_and_directories(tmp_path: Path) -> None:
+    from imaparc.service import install_desktop_action
+
+    body = install_desktop_action(
+        tmp_path, executable=Path("/opt/bin/imaparc")
+    ).read_text(encoding="utf-8")
+
+    assert "message/rfc822" in body  # .eml
+    assert "inode/directory" in body
+
+
+def test_linux_action_is_hidden_from_the_application_menu(tmp_path: Path) -> None:
+    """It is a file action, not something to launch from an app grid."""
+    from imaparc.service import install_desktop_action
+
+    body = install_desktop_action(
+        tmp_path, executable=Path("/opt/bin/imaparc")
+    ).read_text(encoding="utf-8")
+
+    assert "NoDisplay=true" in body
+
+
+def test_linux_action_needs_an_absolute_path(tmp_path: Path) -> None:
+    from imaparc.service import install_desktop_action
+
+    with pytest.raises(ImapArcError, match="absolute"):
+        install_desktop_action(tmp_path, executable=Path("imaparc"))

@@ -154,6 +154,61 @@ def _command(executable: Path, name: str | None) -> str:
     return f'export PATH="{path_prefix}:$PATH"\n"{executable}" eml{option} "$@"'
 
 
+APPLICATIONS_DIR = Path.home() / ".local" / "share" / "applications"
+DESKTOP_FILE = "imaparc-archive.desktop"
+
+
+def install_desktop_action(
+    applications_dir: Path = APPLICATIONS_DIR,
+    *,
+    executable: Path,
+    name: str | None = None,
+) -> Path:
+    """Write a Desktop Entry so Linux file managers offer imapArc on a selection.
+
+    The counterpart to the macOS Quick Action. A hidden ``.desktop`` entry
+    declaring the MIME types it handles is what Nautilus, Dolphin and Thunar all
+    read for "Open With" — there is no cross-desktop context-menu API, but this
+    much every one of them honours.
+
+    ``%F`` passes the whole selection; ``%f`` would hand over only the first item
+    and quietly drop the rest. ``NoDisplay=true`` keeps it out of the application
+    menu, since it is a file action rather than something to launch on its own.
+
+    Args:
+        applications_dir: Where to install; the default is on the XDG search path.
+        executable: Absolute path to ``imaparc`` — a file manager does not
+            resolve names against the user's shell ``PATH``.
+        name: Optional ``--name`` value baked into the command.
+
+    Returns:
+        The path of the written ``.desktop`` file.
+
+    Raises:
+        ImapArcError: If ``executable`` is not an absolute path.
+    """
+    if not executable.is_absolute():
+        raise ImapArcError(
+            f"the imaparc path must be absolute (a file manager does not "
+            f"inherit your shell PATH): {executable}"
+        )
+    applications_dir.mkdir(parents=True, exist_ok=True)
+    option = f" --name {name}" if name else ""
+    path = applications_dir / DESKTOP_FILE
+    path.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        f"Name={SERVICE_NAME}\n"
+        "Comment=Archive selected .eml files as PDF/A\n"
+        f'Exec="{executable}" eml{option} %F\n'
+        "MimeType=message/rfc822;inode/directory;\n"
+        "NoDisplay=true\n"
+        "Terminal=true\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def install_quick_action(
     services_dir: Path = SERVICES_DIR,
     *,

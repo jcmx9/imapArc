@@ -30,7 +30,7 @@ Leitprinzip: **imapArc bewahrt, es verändert nicht.** Die vollständige Rohmail
 
 ## Installation
 
-**Der einfache Weg (macOS):** ein Befehl installiert alles — uv, Ghostscript, qpdf, veraPDF, imapArc, Chromium — und richtet den Finder-Rechtsklick ein:
+**Der einfache Weg (macOS und Linux):** ein Befehl installiert alles — uv, Ghostscript, qpdf, veraPDF, imapArc, Chromium — und richtet den Finder-Rechtsklick ein:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jcmx9/imapArc/main/install.sh | bash
@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/jcmx9/imapArc/main/install.sh | bas
 
 Vorhandenes wird übersprungen, nichts doppelt installiert. Optionen: `--no-service` (ohne Rechtsklick-Eintrag), `--no-init` (ohne Konfiguration anzulegen).
 
-Danach steht im Finder unter **Rechtsklick → Dienste → „Mit imapArc archivieren"** ein Eintrag bereit, der auf markierte `.eml`-Dateien *und* ganze Ordner wirkt — auch auf mehrere gleichzeitig. Nachträglich einrichten oder erneuern:
+Danach steht ein Eintrag im Dateimanager bereit, der auf markierte `.eml`-Dateien *und* ganze Ordner wirkt — auch auf mehrere gleichzeitig: unter macOS als **Rechtsklick → Dienste → „Mit imapArc archivieren"**, unter Linux als **Rechtsklick → Öffnen mit** (Nautilus, Dolphin, Thunar). Nachträglich einrichten oder erneuern:
 
 ```bash
 imaparc install-service

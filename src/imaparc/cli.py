@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -28,7 +29,13 @@ from imaparc.logging_setup import setup_logging
 from imaparc.profiles import Profile, load_profiles
 from imaparc.render_run import run_render
 from imaparc.restore import RestoreOutcome, restore_files, summarise
-from imaparc.service import SERVICES_DIR, install_quick_action
+from imaparc.service import (
+    APPLICATIONS_DIR,
+    SERVICE_NAME,
+    SERVICES_DIR,
+    install_desktop_action,
+    install_quick_action,
+)
 from imaparc.sources.imap import ImapConnection
 from imaparc.state import StateStore
 from imaparc.verify import Severity, verify_profile
@@ -671,11 +678,12 @@ def verify(
 def install_service(
     name: _NameOpt = "mail",
 ) -> None:
-    """Add a macOS right-click action (Finder → Services) for .eml files.
+    """Add a file-manager action for .eml files.
 
-    Afterwards, selecting one or more ``.eml`` files — or whole folders — and
-    right-clicking offers an entry that archives them on the spot, exactly as
-    ``imaparc eml`` would.
+    On macOS this is a Finder Quick Action (right-click → Services); on Linux a
+    Desktop Entry that Nautilus, Dolphin and Thunar offer under "Open With".
+    Either way, selecting one or more ``.eml`` files — or whole folders — and
+    invoking it archives them exactly as ``imaparc eml`` would.
     """
     executable = shutil.which("imaparc")
     if executable is None:
@@ -686,17 +694,28 @@ def install_service(
         )
         raise typer.Exit(1)
     try:
-        bundle = install_quick_action(
-            SERVICES_DIR, executable=Path(executable), name=name
-        )
+        if sys.platform == "darwin":
+            written = install_quick_action(
+                SERVICES_DIR, executable=Path(executable), name=name
+            )
+            hint = (
+                "Rechtsklick auf .eml-Dateien oder Ordner im Finder → Dienste → "
+                f"„{written.stem}“."
+            )
+        else:
+            written = install_desktop_action(
+                APPLICATIONS_DIR, executable=Path(executable), name=name
+            )
+            hint = (
+                "Rechtsklick auf .eml-Dateien oder Ordner → Öffnen mit → "
+                f"„{SERVICE_NAME}“. Manche Dateimanager wollen einmal neu "
+                "gestartet werden."
+            )
     except (ImapArcError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(f"Installed {bundle}")
-    typer.echo(
-        "Rechtsklick auf .eml-Dateien oder Ordner im Finder → Dienste → "
-        f"„{bundle.stem}“."
-    )
+    typer.echo(f"Installed {written}")
+    typer.echo(hint)
 
 
 @app.command()
