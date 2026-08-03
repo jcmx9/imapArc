@@ -186,8 +186,10 @@ async def run_adhoc(
             async def process(eml: Path) -> RenderResult | None:
                 async with semaphore:
                     try:
+                        raw = eml.read_bytes()
                         result = await render_mail(
-                            parse_mail(eml.read_bytes()),
+                            parse_mail(raw),
+                            raw=raw,
                             profile=name,
                             output_dir=eml.parent,
                             pool=pool,
