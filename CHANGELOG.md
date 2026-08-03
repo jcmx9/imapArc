@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Linux support for the installer and the file-manager action.** `install.sh`
+  handles apt, dnf and pacman (including `icc-profiles-free`, without which PDF/A
+  conversion aborts for want of an sRGB profile), and `imaparc install-service`
+  writes a Desktop Entry that Nautilus, Dolphin and Thunar offer under "Open
+  With" instead of the macOS Quick Action. `%F` passes the whole selection —
+  `%f` would hand over the first item and silently drop the rest.
+
+### Added
 - **`imaparc reset --profile <name>`** clears one profile's delivery state
   instead of all of it. Correcting a single profile's rules previously cost every
   other profile its state and sent the next run through the whole mailbox again.

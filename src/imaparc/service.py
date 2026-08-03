@@ -1,13 +1,16 @@
-"""macOS Quick Action: archive mail straight from the Finder's context menu.
+"""File-manager action: archive mail straight from the context menu.
 
-Writes an Automator *service* bundle to ``~/Library/Services``. After that, a
-right-click on one or more ``.eml`` files — or on whole folders — offers an
+A right-click on one or more ``.eml`` files — or on whole folders — offers an
 "Archive with imapArc" entry that runs :func:`imaparc.adhoc.run_adhoc` over the
-selection.
+selection. Two mechanisms, picked by :func:`install_action`:
 
-The bundle is two property lists in a fixed directory layout; it is generated
-here rather than shipped as a binary blob, so the executable path is baked in at
-install time and the whole thing stays reviewable as code.
+* macOS: an Automator *service* bundle in ``~/Library/Services``, two property
+  lists in a fixed directory layout.
+* everything else: an XDG Desktop Entry in ``~/.local/share/applications``,
+  which Nautilus, Dolphin and Thunar read for "Open With".
+
+Both are generated here rather than shipped as blobs, so the executable path is
+baked in at install time and the whole thing stays reviewable as code.
 """
 
 from __future__ import annotations
@@ -152,6 +155,102 @@ def _command(executable: Path, name: str | None) -> str:
     option = f" --name {name}" if name else ""
     path_prefix = ":".join(_tool_dirs())
     return f'export PATH="{path_prefix}:$PATH"\n"{executable}" eml{option} "$@"'
+
+
+APPLICATIONS_DIR = Path.home() / ".local" / "share" / "applications"
+DESKTOP_FILE = "imaparc-archive.desktop"
+
+
+def install_desktop_action(
+    applications_dir: Path = APPLICATIONS_DIR,
+    *,
+    executable: Path,
+    name: str | None = None,
+) -> Path:
+    """Write a Desktop Entry so Linux file managers offer imapArc on a selection.
+
+    The counterpart to the macOS Quick Action. A hidden ``.desktop`` entry
+    declaring the MIME types it handles is what Nautilus, Dolphin and Thunar all
+    read for "Open With" — there is no cross-desktop context-menu API, but this
+    much every one of them honours.
+
+    ``%F`` passes the whole selection; ``%f`` would hand over only the first item
+    and quietly drop the rest. ``NoDisplay=true`` keeps it out of the application
+    menu, since it is a file action rather than something to launch on its own.
+
+    Args:
+        applications_dir: Where to install; the default is on the XDG search path.
+        executable: Absolute path to ``imaparc`` — a file manager does not
+            resolve names against the user's shell ``PATH``.
+        name: Optional ``--name`` value baked into the command.
+
+    Returns:
+        The path of the written ``.desktop`` file.
+
+    Raises:
+        ImapArcError: If ``executable`` is not an absolute path.
+    """
+    if not executable.is_absolute():
+        raise ImapArcError(
+            f"the imaparc path must be absolute (a file manager does not "
+            f"inherit your shell PATH): {executable}"
+        )
+    applications_dir.mkdir(parents=True, exist_ok=True)
+    option = f" --name {name}" if name else ""
+    path = applications_dir / DESKTOP_FILE
+    path.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        f"Name={SERVICE_NAME}\n"
+        "Comment=Archive selected .eml files as PDF/A\n"
+        f'Exec="{executable}" eml{option} %F\n'
+        "MimeType=message/rfc822;inode/directory;\n"
+        "NoDisplay=true\n"
+        "Terminal=true\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def install_action(
+    platform: str,
+    *,
+    executable: Path,
+    name: str | None = None,
+    services_dir: Path = SERVICES_DIR,
+    applications_dir: Path = APPLICATIONS_DIR,
+) -> Path:
+    """Install the file-manager action fitting ``platform``; return its path.
+
+    Takes the platform as an argument rather than reading ``sys.platform``
+    itself, so both branches are reachable from a test without patching
+    process-wide state — ``sys.platform`` is what ``sysconfig`` derives module
+    names from, and overriding it breaks unrelated imports.
+
+    Args:
+        platform: A ``sys.platform`` value. Only macOS has its own mechanism;
+            every other system gets the XDG Desktop Entry.
+        executable: Absolute path to ``imaparc``.
+        name: Optional ``--name`` value baked into the command.
+        services_dir: Where a macOS Quick Action goes.
+        applications_dir: Where a Desktop Entry goes.
+    """
+    if platform == "darwin":
+        return install_quick_action(services_dir, executable=executable, name=name)
+    return install_desktop_action(applications_dir, executable=executable, name=name)
+
+
+def action_hint(platform: str) -> str:
+    """How to reach the installed action, in the words of that platform's UI."""
+    if platform == "darwin":
+        return (
+            f"Rechtsklick auf .eml-Dateien oder Ordner im Finder → Dienste → "
+            f"„{SERVICE_NAME}“."
+        )
+    return (
+        f"Rechtsklick auf .eml-Dateien oder Ordner → Öffnen mit → „{SERVICE_NAME}“. "
+        "Manche Dateimanager wollen einmal neu gestartet werden."
+    )
 
 
 def install_quick_action(

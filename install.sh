@@ -34,9 +34,13 @@ parse_args() {
     done
 }
 
-require_macos() {
-    [[ "$(uname -s)" == "Darwin" ]] ||
-        die "this installer targets macOS; on Linux install uv, ghostscript, qpdf and veraPDF with your package manager, then: uv tool install git+${REPO}"
+OS="$(uname -s)"
+
+require_supported_os() {
+    case "${OS}" in
+        Darwin|Linux) ;;
+        *) die "unsupported system: ${OS} (macOS and Linux only)" ;;
+    esac
 }
 
 ensure_uv() {
@@ -51,13 +55,17 @@ ensure_uv() {
     command -v uv >/dev/null 2>&1 || die "uv installation did not put uv on PATH"
 }
 
-ensure_brew_tools() {
+ensure_render_tools() {
     local missing=()
     for tool in gs qpdf; do
         command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
     done
     if [[ ${#missing[@]} -eq 0 ]]; then
         log "Ghostscript and qpdf are present"
+        return
+    fi
+    if [[ "${OS}" == "Linux" ]]; then
+        install_linux_packages "${missing[@]}"
         return
     fi
     command -v brew >/dev/null 2>&1 ||
@@ -73,6 +81,31 @@ ensure_brew_tools() {
         fi
     done
     brew install "${formulae[@]}"
+}
+
+install_linux_packages() {
+    # Package names differ per distribution; the sRGB ICC profile is a separate
+    # package on Debian/Ubuntu and PDF/A conversion aborts without it.
+    local packages=()
+    for tool in "$@"; do
+        case "${tool}" in
+            gs) packages+=("ghostscript") ;;
+            *) packages+=("${tool}") ;;
+        esac
+    done
+    if command -v apt-get >/dev/null 2>&1; then
+        log "installing ${packages[*]} + icc-profiles-free via apt"
+        sudo apt-get update
+        sudo apt-get install -y "${packages[@]}" icc-profiles-free
+    elif command -v dnf >/dev/null 2>&1; then
+        log "installing ${packages[*]} via dnf"
+        sudo dnf install -y "${packages[@]}" colord
+    elif command -v pacman >/dev/null 2>&1; then
+        log "installing ${packages[*]} via pacman"
+        sudo pacman -S --needed --noconfirm "${packages[@]}" colord
+    else
+        die "install ${packages[*]} with your package manager, then re-run"
+    fi
 }
 
 ensure_verapdf() {
@@ -136,9 +169,9 @@ ensure_chromium() {
 
 main() {
     parse_args "$@"
-    require_macos
+    require_supported_os
     ensure_uv
-    ensure_brew_tools
+    ensure_render_tools
     ensure_verapdf
     install_imaparc
     ensure_chromium
@@ -148,7 +181,7 @@ main() {
         imaparc init
     fi
     if [[ ${WITH_SERVICE} -eq 1 ]]; then
-        log "installing the Finder right-click action"
+        log "installing the file-manager action"
         imaparc install-service
     fi
 
@@ -158,7 +191,8 @@ main() {
 
   Einzelne Mails archivieren (kein Setup nötig):
       Mail aus dem Mailprogramm in einen Ordner ziehen, dann
-      Rechtsklick → Dienste → „Mit imapArc archivieren"
+      macOS: Rechtsklick → Dienste → „Mit imapArc archivieren"
+      Linux: Rechtsklick → Öffnen mit → „Mit imapArc archivieren"
     oder im Terminal:
       imaparc eml ~/Desktop
 
