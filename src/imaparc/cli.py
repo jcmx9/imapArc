@@ -31,10 +31,9 @@ from imaparc.render_run import run_render
 from imaparc.restore import RestoreOutcome, restore_files, summarise
 from imaparc.service import (
     APPLICATIONS_DIR,
-    SERVICE_NAME,
     SERVICES_DIR,
-    install_desktop_action,
-    install_quick_action,
+    action_hint,
+    install_action,
 )
 from imaparc.sources.imap import ImapConnection
 from imaparc.state import StateStore
@@ -694,28 +693,18 @@ def install_service(
         )
         raise typer.Exit(1)
     try:
-        if sys.platform == "darwin":
-            written = install_quick_action(
-                SERVICES_DIR, executable=Path(executable), name=name
-            )
-            hint = (
-                "Rechtsklick auf .eml-Dateien oder Ordner im Finder → Dienste → "
-                f"„{written.stem}“."
-            )
-        else:
-            written = install_desktop_action(
-                APPLICATIONS_DIR, executable=Path(executable), name=name
-            )
-            hint = (
-                "Rechtsklick auf .eml-Dateien oder Ordner → Öffnen mit → "
-                f"„{SERVICE_NAME}“. Manche Dateimanager wollen einmal neu "
-                "gestartet werden."
-            )
+        written = install_action(
+            sys.platform,
+            executable=Path(executable),
+            name=name,
+            services_dir=SERVICES_DIR,
+            applications_dir=APPLICATIONS_DIR,
+        )
     except (ImapArcError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(f"Installed {written}")
-    typer.echo(hint)
+    typer.echo(action_hint(sys.platform))
 
 
 @app.command()

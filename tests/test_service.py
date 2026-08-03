@@ -1,4 +1,4 @@
-"""Tests for the macOS Quick Action (right-click → Services) installer."""
+"""Tests for the file-manager action installer (macOS Service, XDG entry)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,16 @@ import plistlib
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from imaparc.exceptions import ImapArcError
-from imaparc.service import SERVICE_NAME, install_quick_action
+from imaparc.service import (
+    DESKTOP_FILE,
+    SERVICE_NAME,
+    action_hint,
+    install_action,
+    install_quick_action,
+)
 
 
 def _bundle(services_dir: Path) -> Path:
@@ -96,21 +103,56 @@ def test_name_option_is_passed_through(tmp_path: Path) -> None:
 # --- CLI ------------------------------------------------------------------
 
 
-def test_cli_installs_and_reports_the_path(
+def test_install_action_writes_a_quick_action_on_macos(tmp_path: Path) -> None:
+    written = install_action(
+        "darwin",
+        executable=Path("/opt/bin/imaparc"),
+        services_dir=tmp_path / "services",
+        applications_dir=tmp_path / "applications",
+    )
+
+    assert written == _bundle(tmp_path / "services")
+    assert written.is_dir()
+    assert not (tmp_path / "applications" / DESKTOP_FILE).exists()
+
+
+@pytest.mark.parametrize("platform", ["linux", "freebsd14"])
+def test_install_action_writes_a_desktop_entry_elsewhere(
+    tmp_path: Path, platform: str
+) -> None:
+    """Everything that is not macOS gets the XDG entry, not just Linux."""
+    written = install_action(
+        platform,
+        executable=Path("/opt/bin/imaparc"),
+        services_dir=tmp_path / "services",
+        applications_dir=tmp_path / "applications",
+    )
+
+    assert written == tmp_path / "applications" / DESKTOP_FILE
+    assert written.is_file()
+    assert not (tmp_path / "services").exists()
+
+
+def test_action_hint_names_the_menu_of_the_platform() -> None:
+    assert "Dienste" in action_hint("darwin")
+    assert "Öffnen mit" in action_hint("linux")
+
+
+def test_cli_installs_for_the_running_platform(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from typer.testing import CliRunner
-
+    """Which artefact is written per platform is covered by install_action."""
     from imaparc.cli import app
 
     monkeypatch.setattr("imaparc.cli.SERVICES_DIR", tmp_path)
+    monkeypatch.setattr("imaparc.cli.APPLICATIONS_DIR", tmp_path)
     monkeypatch.setattr("shutil.which", lambda _cmd: "/opt/bin/imaparc")
 
     result = CliRunner().invoke(app, ["install-service"])
 
     assert result.exit_code == 0
-    assert _bundle(tmp_path).is_dir()
-    assert "Rechtsklick" in result.output or "right-click" in result.output.lower()
+    assert list(tmp_path.iterdir()), "nothing was installed"
+    assert "Rechtsklick" in result.output
 
 
 def test_cli_fails_clearly_when_imaparc_is_not_on_path(
@@ -121,6 +163,7 @@ def test_cli_fails_clearly_when_imaparc_is_not_on_path(
     from imaparc.cli import app
 
     monkeypatch.setattr("imaparc.cli.SERVICES_DIR", tmp_path)
+    monkeypatch.setattr("imaparc.cli.APPLICATIONS_DIR", tmp_path)
     monkeypatch.setattr("shutil.which", lambda _cmd: None)
 
     result = CliRunner().invoke(app, ["install-service"])

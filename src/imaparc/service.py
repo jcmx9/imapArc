@@ -1,13 +1,16 @@
-"""macOS Quick Action: archive mail straight from the Finder's context menu.
+"""File-manager action: archive mail straight from the context menu.
 
-Writes an Automator *service* bundle to ``~/Library/Services``. After that, a
-right-click on one or more ``.eml`` files — or on whole folders — offers an
+A right-click on one or more ``.eml`` files — or on whole folders — offers an
 "Archive with imapArc" entry that runs :func:`imaparc.adhoc.run_adhoc` over the
-selection.
+selection. Two mechanisms, picked by :func:`install_action`:
 
-The bundle is two property lists in a fixed directory layout; it is generated
-here rather than shipped as a binary blob, so the executable path is baked in at
-install time and the whole thing stays reviewable as code.
+* macOS: an Automator *service* bundle in ``~/Library/Services``, two property
+  lists in a fixed directory layout.
+* everything else: an XDG Desktop Entry in ``~/.local/share/applications``,
+  which Nautilus, Dolphin and Thunar read for "Open With".
+
+Both are generated here rather than shipped as blobs, so the executable path is
+baked in at install time and the whole thing stays reviewable as code.
 """
 
 from __future__ import annotations
@@ -207,6 +210,47 @@ def install_desktop_action(
         encoding="utf-8",
     )
     return path
+
+
+def install_action(
+    platform: str,
+    *,
+    executable: Path,
+    name: str | None = None,
+    services_dir: Path = SERVICES_DIR,
+    applications_dir: Path = APPLICATIONS_DIR,
+) -> Path:
+    """Install the file-manager action fitting ``platform``; return its path.
+
+    Takes the platform as an argument rather than reading ``sys.platform``
+    itself, so both branches are reachable from a test without patching
+    process-wide state — ``sys.platform`` is what ``sysconfig`` derives module
+    names from, and overriding it breaks unrelated imports.
+
+    Args:
+        platform: A ``sys.platform`` value. Only macOS has its own mechanism;
+            every other system gets the XDG Desktop Entry.
+        executable: Absolute path to ``imaparc``.
+        name: Optional ``--name`` value baked into the command.
+        services_dir: Where a macOS Quick Action goes.
+        applications_dir: Where a Desktop Entry goes.
+    """
+    if platform == "darwin":
+        return install_quick_action(services_dir, executable=executable, name=name)
+    return install_desktop_action(applications_dir, executable=executable, name=name)
+
+
+def action_hint(platform: str) -> str:
+    """How to reach the installed action, in the words of that platform's UI."""
+    if platform == "darwin":
+        return (
+            f"Rechtsklick auf .eml-Dateien oder Ordner im Finder → Dienste → "
+            f"„{SERVICE_NAME}“."
+        )
+    return (
+        f"Rechtsklick auf .eml-Dateien oder Ordner → Öffnen mit → „{SERVICE_NAME}“. "
+        "Manche Dateimanager wollen einmal neu gestartet werden."
+    )
 
 
 def install_quick_action(
