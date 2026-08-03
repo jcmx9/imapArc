@@ -180,6 +180,7 @@ imaparc eml              # lose .eml-Dateien rendern, ganz ohne Profil
 imaparc install-service  # Finder-Rechtsklick „Mit imapArc archivieren" einrichten
 imaparc doctor           # Installation prüfen: Werkzeuge, Browser, Config, Login
 imaparc verify           # Archiv prüfen: Duplikate, Schäden, Reste
+imaparc restore <pfad>   # archivierte .eml zurück auf den IMAP-Server laden
 
 imaparc all --profile hetzner    # jeden Modus auf ein Profil einschränken
 imaparc fetch --profile hetzner
@@ -251,6 +252,10 @@ Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, konta
 | `doctor` | `--offline` | IMAP-Logins überspringen (kein Netzwerkzugriff) |
 | `verify` | `--profiles <pfad>` | `profile.yaml` mit den zu prüfenden Archiven |
 | `verify` | `--profile <name>` | Nur dieses eine Archiv prüfen |
+| `restore` | `[PFADE...]` | Archivierte `.eml`-Dateien oder Verzeichnisse |
+| `restore` | `--account <name>` | Konto aus der `.env` (nötig bei mehreren) |
+| `restore` | `--folder <name>` | Zielordner, wird angelegt (Default `INBOX`) |
+| `restore` | `--dry-run` | Nur zeigen, was hochgeladen würde |
 | `doctor` | `--env`, `--profiles` | Zu prüfende Konfigurationsdateien |
 | `all` / `fetch` / `render` / `eml` | `--log-file <pfad>` | Log zusätzlich in diese Datei — **auch bei `-Q`** |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |

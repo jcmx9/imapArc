@@ -244,6 +244,32 @@ class ImapConnection:
         raw = data.get(b"BODY[]")
         return raw if isinstance(raw, bytes) else None
 
+    def contains_message_id(self, folder: str, message_id: str) -> bool:
+        """Whether ``folder`` already holds a message with this ``Message-ID``.
+
+        Used before restoring so a re-run does not add a second copy. The header
+        travels with the mail, unlike the UID, which is exactly what makes it
+        usable for this.
+        """
+        if not self._conn.folder_exists(folder):
+            return False
+        self._conn.select_folder(folder, readonly=True)
+        return bool(self._conn.search(["HEADER", "Message-ID", message_id]))
+
+    def append(self, folder: str, raw: bytes, received: datetime | None = None) -> None:
+        """Upload a message into ``folder``, creating it if missing.
+
+        ``received`` becomes the server-side INTERNALDATE. Without it the mail
+        would appear to have arrived at restore time, which sorts it to the
+        bottom of every mailbox view and loses the one date the raw bytes cannot
+        carry back on their own.
+        """
+        if not self._conn.folder_exists(folder):
+            self._conn.create_folder(folder)
+            with contextlib.suppress(Exception):
+                self._conn.subscribe_folder(folder)
+        self._conn.append(folder, raw, msg_time=received)
+
     def label(self, folder: str, uid: int, keyword: str) -> None:
         """Add an IMAP keyword to a message (opens the folder writable)."""
         self._conn.select_folder(folder)

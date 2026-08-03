@@ -16,7 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from imaparc import __version__
-from imaparc.accounts import ConfigError, load_accounts
+from imaparc.accounts import Account, ConfigError, load_accounts
 from imaparc.adhoc import collect_eml, run_adhoc
 from imaparc.bootstrap import init_config, profile_block, render_profiles_file
 from imaparc.config import ToolPaths
@@ -27,7 +27,9 @@ from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
 from imaparc.profiles import Profile, load_profiles
 from imaparc.render_run import run_render
+from imaparc.restore import RestoreOutcome, restore_files, summarise
 from imaparc.service import SERVICES_DIR, install_quick_action
+from imaparc.sources.imap import ImapConnection
 from imaparc.state import StateStore
 from imaparc.verify import Severity, verify_profile
 from imaparc.verify import exit_code as verify_exit_code
@@ -540,6 +542,77 @@ def doctor(
     else:
         console.print("[green]all good[/]")
     raise typer.Exit(exit_code(checks))
+
+
+@app.command()
+def restore(
+    paths: Annotated[
+        list[Path] | None,
+        typer.Argument(help="Archived .eml files or directories holding them."),
+    ] = None,
+    env_file: _EnvOpt = DEFAULT_ENV,
+    account: Annotated[
+        str | None,
+        typer.Option("--account", help="Account from .env (required if several)."),
+    ] = None,
+    folder: Annotated[
+        str, typer.Option("--folder", help="Target mailbox; created if missing.")
+    ] = "INBOX",
+    dry_run: _DryRunOpt = False,
+    log_file: _LogFileOpt = None,
+    silent: _SilentOpt = False,
+    verbose: _VerboseOpt = False,
+    debug: _DebugOpt = False,
+) -> None:
+    """Upload archived .eml files back onto an IMAP server.
+
+    For mail that is gone from the server and survives only in the archive — for
+    instance after an ``after_fetch: delete`` profile, or when moving provider.
+
+    Safe to repeat: each mail is looked up by ``Message-ID`` first, so a second
+    run adds nothing. Nothing already on the server is modified.
+    """
+    verbosity = _verbosity(silent, verbose, debug)
+    setup_logging(verbosity, log_file)
+    try:
+        files = collect_eml(list(paths or []))
+        accounts = load_accounts(env_file)
+    except (SourceError, ConfigError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not files:
+        typer.echo("Nothing to restore: no .eml files found.")
+        return
+
+    chosen = _select_account(accounts, account)
+    with ImapConnection(chosen) as conn:
+        results = restore_files(conn, files, folder=folder, dry_run=dry_run)
+    if verbosity > 0 or dry_run:
+        typer.echo(summarise(results))
+    raise typer.Exit(
+        1 if any(r.outcome is RestoreOutcome.FAILED for r in results) else 0
+    )
+
+
+def _select_account(accounts: dict[str, Account], name: str | None) -> Account:
+    """Pick the account to restore into, or exit with a usable message."""
+    if not accounts:
+        typer.echo("Error: no IMAP account defined in the .env", err=True)
+        raise typer.Exit(1)
+    if name is not None:
+        if name.lower() not in accounts:
+            known = ", ".join(sorted(accounts))
+            typer.echo(f"Error: no account '{name}' (known: {known})", err=True)
+            raise typer.Exit(1)
+        return accounts[name.lower()]
+    if len(accounts) > 1:
+        known = ", ".join(sorted(accounts))
+        typer.echo(
+            f"Error: several accounts defined ({known}) — pick one with --account",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return next(iter(accounts.values()))
 
 
 @app.command()
