@@ -5,6 +5,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`imaparc restore`** uploads archived `.eml` files back onto an IMAP server —
+  for mail that is gone from the server and survives only in the archive, after
+  an `after_fetch: delete` profile or when moving provider. `--folder` picks the
+  target mailbox (created if missing), `--dry-run` shows what would happen.
+
+  **Idempotent**: each mail is looked up by `Message-ID` before uploading, so a
+  second run adds nothing. The reason to restore is usually that you are *unsure*
+  whether the mail is there, which makes "safe to repeat" the property that
+  matters. It is also the only place in imapArc that writes new mail to a server,
+  and it never modifies anything already present — no flags, no moves, no
+  deletions.
+
 ## [26.8.10] - 2026-08-02
 
 ### Changed

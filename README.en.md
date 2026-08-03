@@ -179,6 +179,7 @@ imaparc eml              # render loose .eml files, with no profile at all
 imaparc install-service  # add the Finder right-click action
 imaparc doctor           # check the install: tools, browser, config, login
 imaparc verify           # check the archive: duplicates, damage, leftovers
+imaparc restore <path>   # upload archived .eml back onto the IMAP server
 
 imaparc all --profile hetzner    # restrict any mode to one profile
 imaparc fetch --profile hetzner
@@ -250,6 +251,10 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 | `doctor` | `--offline` | Skip the IMAP logins (no network access) |
 | `verify` | `--profiles <path>` | `profile.yaml` naming the archives to check |
 | `verify` | `--profile <name>` | Check only this one archive |
+| `restore` | `[PATHS...]` | Archived `.eml` files or directories |
+| `restore` | `--account <name>` | Account from the `.env` (required if several) |
+| `restore` | `--folder <name>` | Target mailbox, created if missing (default `INBOX`) |
+| `restore` | `--dry-run` | Only show what would be uploaded |
 | `doctor` | `--env`, `--profiles` | Config files to inspect |
 | `all` / `fetch` / `render` / `eml` | `--log-file <path>` | Also write the log here — **including at `-Q`** |
 | `all` / `fetch` / `render` / `eml` | `-Q` / `-v` / `-vv` | Silent / Verbose / Debug |
