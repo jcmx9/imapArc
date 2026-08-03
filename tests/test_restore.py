@@ -120,3 +120,65 @@ def test_an_unreadable_file_does_not_stop_the_rest(tmp_path: Path) -> None:
     assert RestoreOutcome.FAILED in outcomes
     assert RestoreOutcome.UPLOADED in outcomes
     assert _mailbox_count(user) == 1
+
+
+def test_a_colliding_message_id_does_not_swallow_a_different_mail(
+    tmp_path: Path,
+) -> None:
+    """Two different mails may share a Message-ID — the sender picks it.
+
+    Matching on it alone made the second mail report "already there" and never
+    reach the server: a silent loss in the one command you run because you want
+    a mail back.
+    """
+    user = _user("collide")
+    first = tmp_path / "a.eml"
+    first.write_bytes(
+        build_mail(
+            to=user,
+            subject="Rechnung Maerz",
+            message_id="<1@localhost>",
+            date="Sun, 01 Mar 2026 10:00:00 +0100",
+        )
+    )
+    second = tmp_path / "b.eml"
+    second.write_bytes(
+        build_mail(
+            to=user,
+            subject="Mahnung April",
+            message_id="<1@localhost>",
+            date="Wed, 01 Apr 2026 11:00:00 +0200",
+        )
+    )
+
+    with ImapConnection(_account(user)) as conn:
+        results = restore_files(conn, [first, second], folder="INBOX")
+
+    assert [r.outcome for r in results] == [
+        RestoreOutcome.UPLOADED,
+        RestoreOutcome.UPLOADED,
+    ]
+    assert _mailbox_count(user) == 2
+
+
+def test_the_same_mail_is_still_recognised_despite_the_stricter_check(
+    tmp_path: Path,
+) -> None:
+    """Tightening must not break idempotency — that is the point of restore."""
+    user = _user("strict")
+    eml = tmp_path / "mail.eml"
+    eml.write_bytes(
+        build_mail(
+            to=user,
+            subject="Az 4711",
+            message_id="<strict@test>",
+            date="Sun, 01 Mar 2026 10:00:00 +0100",
+        )
+    )
+
+    with ImapConnection(_account(user)) as conn:
+        restore_files(conn, [eml], folder="INBOX")
+        again = restore_files(conn, [eml], folder="INBOX")
+
+    assert [r.outcome for r in again] == [RestoreOutcome.ALREADY_THERE]
+    assert _mailbox_count(user) == 1
