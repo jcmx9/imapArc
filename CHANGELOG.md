@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.11] - 2026-08-03
+
 ### Added
 - **`imaparc restore`** uploads archived `.eml` files back onto an IMAP server —
   for mail that is gone from the server and survives only in the archive, after
