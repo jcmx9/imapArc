@@ -209,7 +209,12 @@ async def test_render_mail_end_to_end(tmp_path: Path) -> None:
 
     async with BrowserPool() as pool:
         result = await render_mail(
-            parsed, profile="test", output_dir=tmp_path, pool=pool, config=config
+            parsed,
+            raw=raw,
+            profile="test",
+            output_dir=tmp_path,
+            pool=pool,
+            config=config,
         )
 
     assert result.written
@@ -244,10 +249,10 @@ async def test_render_mail_is_idempotent(tmp_path: Path) -> None:
     config = RunConfig(tools=ToolPaths.resolve())
     async with BrowserPool() as pool:
         first = await render_mail(
-            parsed, profile="p", output_dir=tmp_path, pool=pool, config=config
+            parsed, raw=raw, profile="p", output_dir=tmp_path, pool=pool, config=config
         )
         second = await render_mail(
-            parsed, profile="p", output_dir=tmp_path, pool=pool, config=config
+            parsed, raw=raw, profile="p", output_dir=tmp_path, pool=pool, config=config
         )
     assert first.written and not first.skipped
     assert second.skipped and not second.written
@@ -365,3 +370,58 @@ def test_a_different_mail_still_disambiguates() -> None:
 
     assert first == "base"
     assert (second, skip) == ("base-2", False)
+
+
+# --- identity: content hash, with backward compatibility --------------------
+
+
+def test_same_bytes_are_the_same_mail() -> None:
+    from imaparc.pipeline import mail_identity, same_mail
+
+    raw = b"From: a@b\r\nMessage-ID: <x@y>\r\nSubject: s\r\n\r\nbody"
+    parsed = parse_mail(raw)
+
+    identity = mail_identity(raw, parsed, None)
+
+    assert same_mail(identity, identity)
+
+
+def test_a_colliding_message_id_is_not_enough(tmp_path: Path) -> None:
+    """Two different mails may carry one Message-ID — the sender picks it.
+
+    `<1@localhost>` and friends come out of legacy systems and test tooling, and
+    nothing stops a sender choosing any value. The content decides.
+    """
+    from imaparc.pipeline import mail_identity, same_mail
+
+    one = b"Message-ID: <1@localhost>\r\nSubject: Rechnung\r\n\r\n100 Euro"
+    two = b"Message-ID: <1@localhost>\r\nSubject: Rechnung\r\n\r\n5000 Euro"
+
+    assert not same_mail(
+        mail_identity(one, parse_mail(one), None),
+        mail_identity(two, parse_mail(two), None),
+    )
+
+
+def test_a_manifest_written_before_the_hash_still_matches() -> None:
+    """Old archives must keep working: their manifests hold only a Message-ID.
+
+    Without this, the first render after upgrading would treat every stored mail
+    as a different one and duplicate the entire archive into `…-2` folders.
+    """
+    from imaparc.pipeline import mail_identity, same_mail
+
+    raw = b"Message-ID: <old@example.com>\r\nSubject: s\r\n\r\nbody"
+    legacy_manifest = "<old@example.com>"  # what pre-26.8.12 wrote
+
+    assert same_mail(legacy_manifest, mail_identity(raw, parse_mail(raw), None))
+
+
+def test_a_mail_without_a_message_id_still_has_an_identity() -> None:
+    from imaparc.pipeline import mail_identity, same_mail
+
+    raw = b"From: a@b\r\nSubject: no id\r\n\r\nbody"
+    identity = mail_identity(raw, parse_mail(raw), None)
+
+    assert same_mail(identity, identity)
+    assert "sha256:" in identity

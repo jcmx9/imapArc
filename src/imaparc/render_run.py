@@ -140,9 +140,11 @@ async def _render_profile(
             try:
                 # Read here, not when listing: only `jobs` mails are in memory
                 # at any moment, regardless of how large the archive is.
-                parsed = parse_mail(path.read_bytes())
+                raw = path.read_bytes()
+                parsed = parse_mail(raw)
                 result = await render_mail(
                     parsed,
+                    raw=raw,
                     profile=profile.name,
                     output_dir=output,
                     pool=pool,

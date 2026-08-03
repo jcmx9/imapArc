@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import os
 import re
@@ -89,6 +90,7 @@ class RenderResult:
 async def render_mail(
     parsed: ParsedMail,
     *,
+    raw: bytes,
     profile: str,
     output_dir: Path,
     pool: BrowserPool,
@@ -125,7 +127,7 @@ async def render_mail(
         pattern=config.filename_pattern,
         date_format=config.date_format,
     )
-    identity = _mail_identity(parsed, timestamp)
+    identity = mail_identity(raw, parsed, timestamp)
     basename, skip = _resolve_output(output_dir, base, identity, claimed)
     if skip:
         return RenderResult(basename, written=False, skipped=True)
@@ -182,11 +184,44 @@ async def render_mail(
     )
 
 
-def _mail_identity(parsed: ParsedMail, timestamp: datetime | None) -> str:
-    """A stable identity for a mail — the Message-ID, or a header composite."""
-    if parsed.headers.message_id:
-        return parsed.headers.message_id
-    return f"{parsed.headers.from_}|{parsed.headers.subject}|{timestamp}"
+_HASH_PREFIX = "sha256:"
+
+
+def mail_identity(raw: bytes, parsed: ParsedMail, timestamp: datetime | None) -> str:
+    """A mail's identity: its Message-ID *and* a hash of its bytes, one per line.
+
+    The Message-ID alone is not enough. The **sender** chooses it, nothing
+    enforces the uniqueness RFC 5322 asks for, and legacy systems emit values
+    like ``<1@localhost>``. Two different mails sharing one would look identical
+    here, and the second would silently never be rendered.
+
+    The hash decides; the Message-ID is kept because manifests written before
+    26.8.12 hold only that, and matching on it lets an existing archive keep
+    working instead of duplicating itself on the next run (see :func:`same_mail`).
+    """
+    primary = parsed.headers.message_id or (
+        f"{parsed.headers.from_}|{parsed.headers.subject}|{timestamp}"
+    )
+    return f"{primary}\n{_HASH_PREFIX}{hashlib.sha256(raw).hexdigest()}"
+
+
+def same_mail(stored: str | None, current: str) -> bool:
+    """Whether a stored manifest describes the same mail as ``current``.
+
+    A hash match is conclusive, so it is preferred whenever both sides carry one.
+    Only when the stored manifest predates hashing does this fall back to the
+    Message-ID — which is exactly the weaker check, but the alternative is to
+    declare every previously archived mail unknown.
+    """
+    if stored is None:
+        return False
+    stored_parts = set(stored.splitlines())
+    current_parts = set(current.splitlines())
+    stored_hash = {p for p in stored_parts if p.startswith(_HASH_PREFIX)}
+    current_hash = {p for p in current_parts if p.startswith(_HASH_PREFIX)}
+    if stored_hash and current_hash:
+        return bool(stored_hash & current_hash)
+    return bool((stored_parts - stored_hash) & (current_parts - current_hash))
 
 
 def read_identity(subfolder: Path) -> str | None:
@@ -232,11 +267,11 @@ def _resolve_output(
     while True:
         subfolder = output_dir / candidate
         if candidate in claimed:
-            if claimed[candidate] == identity:
+            if same_mail(claimed[candidate], identity):
                 return candidate, True  # same mail, a sibling render has it
             # A different mail holds the name — disambiguate.
         elif subfolder.exists():
-            if read_identity(subfolder) == identity:
+            if same_mail(read_identity(subfolder), identity):
                 return candidate, True
             # A different mail (or corrupt folder) owns this name — disambiguate.
         else:
