@@ -356,7 +356,12 @@ def _fetch_folder(
                 basename = _basename_for(profile, message)
                 eml_path = deliver_eml(eml_dir, raw, basename)
                 state.mark_delivered(
-                    account_name, folder, uidvalidity, message.uid, eml_path.name
+                    account_name,
+                    folder,
+                    uidvalidity,
+                    message.uid,
+                    eml_path.name,
+                    profile=profile.name,
                 )
                 report.add(profile.name)
                 # One line per mail so a long run can be watched, not just

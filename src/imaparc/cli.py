@@ -398,24 +398,38 @@ def sync_profiles(
 @app.command()
 def reset(
     state_db: _StateOpt = None,
+    only_profile: _ProfileOpt = None,
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")
     ] = False,
 ) -> None:
-    """Forget delivered state so the next fetch re-processes all matching mail.
+    """Forget delivered state so the next fetch re-processes matching mail.
+
+    ``--profile <name>`` limits this to one profile; without it, every profile's
+    state goes.
 
     Clears the dedup database only — your archived ``.eml``/PDF files are left in
     place. Remove an output directory separately if you also want a clean archive.
     """
     db = state_db or DEFAULT_STATE
+    scope = f"profile '{only_profile}'" if only_profile else "all profiles"
     if not yes:
         typer.confirm(
-            f"Clear delivery state ({db})? The next fetch re-processes all "
-            "matching mail.",
+            f"Clear delivery state for {scope} ({db})? The next fetch "
+            "re-processes that mail.",
             abort=True,
         )
-    dropped = StateStore(db).clear()
-    typer.echo(f"Delivery state cleared ({dropped} record(s)).")
+    store = StateStore(db)
+    untracked = store.untracked_count() if only_profile else 0
+    dropped = store.clear(profile=only_profile)
+    typer.echo(f"Delivery state cleared ({dropped} record(s), {scope}).")
+    if untracked:
+        # Say so rather than let a targeted reset look complete while the mail it
+        # was meant to free up stays skipped.
+        typer.echo(
+            f"Note: {untracked} record(s) predate per-profile tracking and were "
+            "left untouched. Run without --profile to clear those too."
+        )
 
 
 @app.command()

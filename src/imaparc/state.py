@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS delivered (
     uidvalidity INTEGER NOT NULL,
     uid INTEGER NOT NULL,
     filename TEXT,
+    profile TEXT,
     PRIMARY KEY (account, folder, uidvalidity, uid)
 );
 """
@@ -51,10 +52,18 @@ class StateStore:
         return sqlite3.connect(self._db_path)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
-        """Add the ``filename`` column to a pre-existing table if it is missing."""
+        """Add columns a pre-existing table is missing.
+
+        Rows written before a column existed keep NULL there. For ``profile``
+        that means a targeted clear cannot reach them — see
+        :meth:`untracked_count`, which is why the number is surfaced rather than
+        quietly ignored.
+        """
         columns = {row[1] for row in conn.execute("PRAGMA table_info(delivered)")}
         if "filename" not in columns:
             conn.execute("ALTER TABLE delivered ADD COLUMN filename TEXT")
+        if "profile" not in columns:
+            conn.execute("ALTER TABLE delivered ADD COLUMN profile TEXT")
 
     def delivered_uids(self, account: str, folder: str, uidvalidity: int) -> set[int]:
         """Return the set of UIDs already delivered for this folder generation."""
@@ -73,13 +82,19 @@ class StateStore:
         uidvalidity: int,
         uid: int,
         filename: str | None = None,
+        profile: str | None = None,
     ) -> None:
-        """Record that ``uid`` has been delivered, with its ``.eml`` filename."""
+        """Record that ``uid`` has been delivered, with its ``.eml`` filename.
+
+        ``profile`` is stored so ``reset --profile`` can drop one profile's
+        state without discarding every other profile's.
+        """
         with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO delivered "
-                "(account, folder, uidvalidity, uid, filename) VALUES (?, ?, ?, ?, ?)",
-                (account, folder, uidvalidity, uid, filename),
+                "(account, folder, uidvalidity, uid, filename, profile) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (account, folder, uidvalidity, uid, filename, profile),
             )
             conn.commit()
 
@@ -100,13 +115,37 @@ class StateStore:
             ).fetchone()
         return None if row is None or row[0] is None else str(row[0])
 
-    def clear(self) -> int:
-        """Forget all delivered UIDs; return how many were dropped.
+    def clear(self, profile: str | None = None) -> int:
+        """Forget delivered UIDs; return how many were dropped.
 
-        The next fetch then re-evaluates and re-delivers every matching mail.
+        Without ``profile`` this drops everything and the next fetch re-evaluates
+        every matching mail. With one, only that profile's rows go — correcting a
+        single profile's rules should not cost every other profile its state and
+        send the next run through the whole mailbox again.
+
+        Rows written before profiles were recorded carry NULL and are never
+        matched by a targeted clear; :meth:`untracked_count` reports how many.
         """
         with closing(self._connect()) as conn:
-            count = conn.execute("SELECT COUNT(*) FROM delivered").fetchone()[0]
-            conn.execute("DELETE FROM delivered")
+            if profile is None:
+                count = conn.execute("SELECT COUNT(*) FROM delivered").fetchone()[0]
+                conn.execute("DELETE FROM delivered")
+            else:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM delivered WHERE profile = ?", (profile,)
+                ).fetchone()[0]
+                conn.execute("DELETE FROM delivered WHERE profile = ?", (profile,))
             conn.commit()
         return int(count)
+
+    def untracked_count(self) -> int:
+        """Rows with no profile recorded — unreachable by a targeted clear.
+
+        Surfaced so ``reset --profile`` cannot appear to have worked while the
+        mail it was meant to free up stays skipped.
+        """
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM delivered WHERE profile IS NULL"
+            ).fetchone()
+        return int(row[0])

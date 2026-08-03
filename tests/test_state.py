@@ -95,3 +95,46 @@ def test_clear_forgets_everything(tmp_path: Path) -> None:
     assert store.clear() == 3
     assert store.delivered_uids("privat", "INBOX", uidvalidity=1) == set()
     assert store.clear() == 0  # idempotent
+
+
+# --- clearing one profile's state -------------------------------------------
+
+
+def test_clear_can_be_limited_to_one_profile(tmp_path: Path) -> None:
+    """Re-processing one profile must not throw away every other profile's state.
+
+    Without this, correcting a single profile's rules means the next fetch walks
+    the entire mailbox again for all of them.
+    """
+    store = StateStore(tmp_path / "state.db")
+    store.mark_delivered("acc", "INBOX", 1, 10, "a.eml", profile="hetzner")
+    store.mark_delivered("acc", "INBOX", 1, 11, "b.eml", profile="kanzlei")
+
+    dropped = store.clear(profile="hetzner")
+
+    assert dropped == 1
+    assert store.delivered_uids("acc", "INBOX", 1) == {11}
+
+
+def test_clear_without_a_profile_still_drops_everything(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    store.mark_delivered("acc", "INBOX", 1, 10, "a.eml", profile="hetzner")
+    store.mark_delivered("acc", "INBOX", 1, 11, "b.eml", profile="kanzlei")
+
+    assert store.clear() == 2
+    assert store.delivered_uids("acc", "INBOX", 1) == set()
+
+
+def test_rows_written_before_profiles_were_tracked_are_reported(
+    tmp_path: Path,
+) -> None:
+    """Old rows carry no profile, so a targeted clear cannot reach them.
+
+    Silently leaving them would make `reset --profile` look like it worked while
+    the mail stays skipped, so the count is surfaced instead.
+    """
+    store = StateStore(tmp_path / "state.db")
+    store.mark_delivered("acc", "INBOX", 1, 10, "a.eml")  # no profile: legacy row
+    store.mark_delivered("acc", "INBOX", 1, 11, "b.eml", profile="hetzner")
+
+    assert store.untracked_count() == 1
