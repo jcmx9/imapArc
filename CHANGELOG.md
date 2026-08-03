@@ -5,12 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 - **A mail's identity no longer rests on the Message-ID alone.** The manifest now
   records a `sha256` of the raw bytes as well, and that is what decides. The
   sender picks the Message-ID, nothing enforces the uniqueness RFC 5322 asks for,
-  and legacy systems emit values like `<1@localhost>` — two different mails
-  sharing one looked identical, and the second was silently never rendered.
+  and legacy systems emit values like `<1@localhost>`.
+
+  This is a hardening, not a repair: in the render path the identity is only
+  consulted once the Message-ID, subject, timestamp *and* profile all match, so
+  two genuinely different mails reaching that point is a contrived case, not an
+  observed one. The reason to change it anyway is that an archive object's
+  identity should not rest on a field the sender chooses freely.
 
   Existing archives are unaffected: manifests written before this hold only a
   Message-ID, and `same_mail()` still matches on it. Without that fallback the
