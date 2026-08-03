@@ -234,6 +234,7 @@ Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, konta
 | `sync-profiles` | `--profiles <pfad>` | `profile.yaml` (Default `~/.config/imaparc/profile.yaml`) |
 | `sync-profiles` | `--yes`, `-y` | Ohne Rückfrage neu schreiben |
 | `reset` | `--state <pfad>` | SQLite-Statusdatei |
+| `reset` | `--profile <name>` | Nur den Status dieses Profils löschen |
 | `reset` | `--yes`, `-y` | Zustell-Status ohne Rückfrage löschen |
 | `fetch` | `--env <pfad>` | `.env` mit Konten (Default `~/.config/imaparc/.env`) |
 | `fetch` | `--profiles <pfad>` | `profile.yaml` (Default `~/.config/imaparc/profile.yaml`) |

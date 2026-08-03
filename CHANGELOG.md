@@ -5,6 +5,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`imaparc reset --profile <name>`** clears one profile's delivery state
+  instead of all of it. Correcting a single profile's rules previously cost every
+  other profile its state and sent the next run through the whole mailbox again.
+  The state store gained a `profile` column (migrated in place). Rows written
+  before it carry NULL and cannot be reached by a targeted clear — their count is
+  reported rather than passed over, so a partial reset does not look complete.
+
+### Fixed
+- **`restore` no longer swallows a mail whose Message-ID collides.** Matching on
+  the ID alone meant a second, different mail sharing it was reported as "already
+  there" and never uploaded. Hits are now checked against the subject from the
+  ENVELOPE. The envelope *date* is deliberately not used: servers return it naive
+  in their own zone, which breaks the comparison against the archived value.
+
 ### Changed
 - **A mail's identity no longer rests on the Message-ID alone.** The manifest now
   records a `sha256` of the raw bytes as well, and that is what decides. The

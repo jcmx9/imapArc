@@ -233,6 +233,7 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 | `sync-profiles` | `--profiles <path>` | `profile.yaml` (default `~/.config/imaparc/profile.yaml`) |
 | `sync-profiles` | `--yes`, `-y` | Rewrite without confirmation |
 | `reset` | `--state <path>` | SQLite state file |
+| `reset` | `--profile <name>` | Clear only this profile's state |
 | `reset` | `--yes`, `-y` | Clear delivery state without confirmation |
 | `fetch` | `--env <path>` | `.env` with accounts (default `~/.config/imaparc/.env`) |
 | `fetch` | `--profiles <path>` | `profile.yaml` (default `~/.config/imaparc/profile.yaml`) |
