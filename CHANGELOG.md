@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.8.14] - 2026-08-07
+
 ### Fixed
 - **`verify` no longer reports rendered mail as unrendered.** The `-2`/`-3`
   suffixes are handed out independently by `deliver_eml()` (for the `.eml`) and
