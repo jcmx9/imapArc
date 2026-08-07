@@ -69,7 +69,7 @@ path = "src/imaparc/__init__.py"
 packages = ["src/imaparc"]
 
 [tool.bumpversion]
-current_version = "26.8.13"
+current_version = "26.8.14"
 commit = true
 tag = true
 tag_name = "v{new_version}"
