@@ -135,3 +135,101 @@ def test_pdf_profile_that_was_never_rendered(tmp_path: Path) -> None:
 
     assert _kinds(findings) == {"unrendered"}
     assert findings[0].severity is Severity.WARN
+
+
+# --- name drift between .eml and its folder ---------------------------------
+
+
+def _eml_with(tmp_path: Path, name: str, raw: bytes) -> Path:
+    eml = tmp_path / "eml"
+    eml.mkdir(parents=True, exist_ok=True)
+    path = eml / f"{name}.eml"
+    path.write_bytes(raw)
+    return path
+
+
+def test_drifted_folder_name_is_not_reported_as_unrendered(tmp_path: Path) -> None:
+    """The suffixes of a .eml and of its PDF folder are assigned independently.
+
+    deliver_eml() counts up ``-2`` for the .eml, _resolve_output() counts up for
+    the folder, and neither knows about the other — so a mail delivered twice can
+    end up as ``X-2.eml`` next to a folder ``X-3``. Nothing is lost, the folder
+    is still reachable through its manifest, and reporting it as "has no PDF
+    folder" buries a genuinely missing PDF in noise.
+    """
+    raw = b"Message-ID: <drift@example.com>\r\n\r\nbody"
+    _eml_with(tmp_path, "2026-08-01_10-00-00_p_Mail-2", raw)
+    _rendered(tmp_path, "2026-08-01_10-00-00_p_Mail-3", "<drift@example.com>")
+
+    assert "unrendered" not in _kinds(verify_profile(_profile(tmp_path)))
+
+
+def test_drift_is_recognised_by_hash_when_the_message_id_differs(
+    tmp_path: Path,
+) -> None:
+    """Manifests written since 26.8.12 carry a hash; that is what decides."""
+    import hashlib
+
+    raw = b"Message-ID: <one@example.com>\r\n\r\nbody"
+    digest = hashlib.sha256(raw).hexdigest()
+    _eml_with(tmp_path, "2026-08-01_10-00-00_p_Mail-2", raw)
+    _rendered(
+        tmp_path,
+        "2026-08-01_10-00-00_p_Mail-9",
+        f"<other@example.com>\nsha256:{digest}",
+    )
+
+    assert "unrendered" not in _kinds(verify_profile(_profile(tmp_path)))
+
+
+def test_a_genuinely_unrendered_mail_is_still_reported(tmp_path: Path) -> None:
+    """The check must stay able to fail — that is the whole point of it."""
+    _eml_with(tmp_path, "2026-08-01_10-00-00_p_Never", b"Message-ID: <gone@x>\r\n\r\nb")
+    _rendered(tmp_path, "2026-08-01_11-00-00_p_Other", "<other@x>")
+
+    findings = verify_profile(_profile(tmp_path))
+
+    assert "unrendered" in _kinds(findings)
+    assert "Never" in next(f for f in findings if f.kind == "unrendered").detail
+
+
+# --- report shape ----------------------------------------------------------
+
+
+def test_many_warnings_of_a_kind_collapse_into_one_line() -> None:
+    """832 duplicate lines are unreadable, and they bury the damage report."""
+    from imaparc.cli import _verify_lines
+
+    findings = [
+        Finding("duplicate", Severity.WARN, "Sudbrackschule", f"folder {i}")
+        for i in range(40)
+    ]
+
+    summary = _verify_lines(findings, verbose=False)
+
+    assert len(summary) == 1
+    assert "40 findings" in summary[0]
+    assert len(_verify_lines(findings, verbose=True)) == 40
+
+
+def test_damage_is_never_summarised_away() -> None:
+    from imaparc.cli import _verify_lines
+
+    findings = [
+        *(Finding("duplicate", Severity.WARN, "p", f"folder {i}") for i in range(10)),
+        Finding("incomplete", Severity.FAIL, "p", "X has no X.pdf"),
+        Finding("incomplete", Severity.FAIL, "p", "Y has no Y.pdf"),
+    ]
+
+    lines = _verify_lines(findings, verbose=False)
+
+    assert sum("has no" in ln for ln in lines) == 2  # both, individually
+    assert len(lines) == 3
+
+
+def test_a_lone_warning_keeps_its_detail() -> None:
+    from imaparc.cli import _verify_lines
+
+    findings = [Finding("staging", Severity.WARN, "p", "leftover: .staging-x")]
+
+    assert ".staging-x" in _verify_lines(findings, verbose=False)[0]
