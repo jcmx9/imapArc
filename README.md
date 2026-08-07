@@ -144,6 +144,8 @@ profiles:
       trash: false                 # optional: Papierkorb bei rekursivem Scan einbeziehen (Default false)
       since: 2026-01-01            # optional: Mails davor ignorieren
       # until: 2026-12-31          # optional: Mails danach ignorieren
+      # larger: 5MB                # optional: nur Mails größer als (5MB, 500KB, Bytes)
+      # smaller: 20MB              # optional: nur Mails kleiner als
     output: ~/Archiv/Hetzner       # Ziel; darunter eml/ und ggf. pdf/
     pdf: true                      # optional: auch PDFs rendern (Default false)
     # remote_images: false       # externe Bilder beim Rendern laden (CLI erzwingt)

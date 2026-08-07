@@ -95,3 +95,56 @@ def test_label_and_move() -> None:
         # The freshly created target is subscribed, so a mail client shows it.
         subscribed = {name for _flags, _delim, name in conn._conn.list_sub_folders()}
         assert "Archiv-Test" in subscribed
+
+
+# --- message size ----------------------------------------------------------
+
+
+def _deliver_sized(subject: str, body_bytes: int) -> None:
+    """Deliver a mail whose body is roughly ``body_bytes`` long."""
+    msg = EmailMessage()
+    msg["From"] = "sender@example.com"
+    msg["To"] = _USER
+    msg["Subject"] = subject
+    msg.set_content("x" * body_bytes)
+    with smtplib.SMTP("localhost", 3025) as smtp:
+        smtp.send_message(msg)
+
+
+def test_scan_reports_the_message_size() -> None:
+    """Needed for the size filter, and free — it rides along in the same FETCH."""
+    _deliver_sized("Sized Small", 100)
+    _deliver_sized("Sized Large", 200_000)
+
+    with ImapConnection(_account()) as conn:
+        _, messages = conn.scan("INBOX")
+    by_subject = {m.headers.subject: m for m in messages}
+
+    assert by_subject["Sized Small"].size is not None
+    assert by_subject["Sized Small"].size < 10_000
+    assert by_subject["Sized Large"].size > 100_000
+
+
+def test_scan_can_let_the_server_drop_small_mail() -> None:
+    """IMAP LARGER runs on the server, so small mail costs no header fetch."""
+    _deliver_sized("Larger Tiny", 100)
+    _deliver_sized("Larger Huge", 200_000)
+
+    with ImapConnection(_account()) as conn:
+        _, messages = conn.scan("INBOX", larger=100_000)
+    subjects = {m.headers.subject for m in messages}
+
+    assert "Larger Huge" in subjects
+    assert "Larger Tiny" not in subjects
+
+
+def test_scan_can_let_the_server_drop_large_mail() -> None:
+    _deliver_sized("Smaller Tiny", 100)
+    _deliver_sized("Smaller Huge", 200_000)
+
+    with ImapConnection(_account()) as conn:
+        _, messages = conn.scan("INBOX", smaller=100_000)
+    subjects = {m.headers.subject for m in messages}
+
+    assert "Smaller Tiny" in subjects
+    assert "Smaller Huge" not in subjects

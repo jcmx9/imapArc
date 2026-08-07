@@ -13,7 +13,15 @@ import pytest
 
 from imaparc.accounts import Account
 from imaparc.exceptions import ImapArcError
-from imaparc.fetch import FetchReport, _folder_map, _match_candidate, run_fetch
+from imaparc.fetch import (
+    FetchReport,
+    _common_larger,
+    _common_smaller,
+    _fetch_folder,
+    _folder_map,
+    _match_candidate,
+    run_fetch,
+)
 from imaparc.mail.models import MailHeaders
 from imaparc.profiles import AfterFetch, Match, Profile
 from imaparc.sources.eml import EmlSource
@@ -202,7 +210,7 @@ class _StubConn:
         self._message = message
         self.deleted: list[int] = []
 
-    def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+    def scan(self, folder: str, **criteria: object) -> tuple[int, list[object]]:
         return 99, [self._message]
 
     def fetch_body(self, folder: str, uid: int) -> bytes:  # pragma: no cover
@@ -483,7 +491,7 @@ def test_one_broken_message_does_not_abort_the_folder(tmp_path: Path) -> None:
     from imaparc.state import StateStore
 
     class ExplodingConn:
-        def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+        def scan(self, folder: str, **criteria: object) -> tuple[int, list[object]]:
             return 42, [_kanzlei_msg(1), _kanzlei_msg(2)]
 
         def fetch_body(self, folder: str, uid: int) -> bytes:
@@ -541,7 +549,7 @@ class _AccountConn:
     def resolve_move_destination(self, source: str, destination: str) -> str:
         return f"INBOX.{destination}"
 
-    def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+    def scan(self, folder: str, **criteria: object) -> tuple[int, list[object]]:
         self.scanned.append(folder)
         return 1, []
 
@@ -820,7 +828,7 @@ class _RecordingConn:
         self._message = message
         self.calls: list[str] = []
 
-    def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+    def scan(self, folder: str, **criteria: object) -> tuple[int, list[object]]:
         return 7, [self._message]
 
     def fetch_body(self, folder: str, uid: int) -> bytes:
@@ -1048,7 +1056,7 @@ def test_fetch_reports_progress_over_all_folders(
     monkeypatch.setattr("imaparc.fetch.make_progress", lambda **_kw: _SpyProgress())
 
     class _WithCandidates(_AccountConn):
-        def scan(self, folder: str, since: object = None) -> tuple[int, list[object]]:
+        def scan(self, folder: str, **criteria: object) -> tuple[int, list[object]]:
             self.scanned.append(folder)
             return 1, [_kanzlei_msg(1), _kanzlei_msg(2)]
 
@@ -1069,3 +1077,52 @@ def test_fetch_reports_progress_over_all_folders(
     # A non-recursive profile scans INBOX only, so the two candidates there are
     # what moves the bar — one step each.
     assert len(advanced) == 2, f"progress advanced {len(advanced)} times, expected 2"
+
+
+# --- size bounds shared across profiles -------------------------------------
+
+
+def _sized_profile(**match: object) -> Profile:
+    return Profile(name="p", account="a", match=Match(**match), output=Path("/tmp/x"))
+
+
+def test_server_side_size_bound_needs_every_profile_to_agree() -> None:
+    """One scan serves all profiles watching a folder.
+
+    Narrowing the search to what *one* profile wants would drop mail another
+    profile asked for — silently, since it never reaches the per-profile check.
+    """
+    both = [_sized_profile(larger="5MB"), _sized_profile(larger="10MB")]
+    assert _common_larger(both) == 5 * 1024 * 1024  # the permissive one wins
+
+    mixed = [_sized_profile(larger="5MB"), _sized_profile(domains=["x.com"])]
+    assert _common_larger(mixed) is None  # no bound at all
+
+    assert (
+        _common_smaller([_sized_profile(smaller="1MB"), _sized_profile(smaller="9MB")])
+        == 9 * 1024 * 1024
+    )
+    assert _common_smaller([_sized_profile(smaller="1MB"), _sized_profile()]) is None
+    assert _common_larger([]) is None
+
+
+def test_scan_is_asked_for_the_size_bounds(tmp_path: Path) -> None:
+    """The bounds must actually reach the server call, not just be computed."""
+    seen: dict[str, object] = {}
+
+    class _Conn:
+        def scan(self, folder: str, **criteria: object) -> tuple[int, list[object]]:
+            seen.update(criteria)
+            return 1, []
+
+    _fetch_folder(
+        _Conn(),  # type: ignore[arg-type]
+        "acct",
+        "INBOX",
+        [_sized_profile(larger="5MB", smaller="20MB")],
+        StateStore(tmp_path / "state.db"),
+        FetchReport(),
+    )
+
+    assert seen["larger"] == 5 * 1024 * 1024
+    assert seen["smaller"] == 20 * 1024 * 1024

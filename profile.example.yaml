@@ -67,6 +67,15 @@ profiles:
       until: 2026-12-31              #   Optional, default null. Ignore messages
                                      #   dated after this day (inclusive window
                                      #   with since).
+      larger: 5MB                    #   Optional, default null. Only messages
+                                     #   bigger than this (5MB, 500KB or a byte
+                                     #   count; 1 KB = 1024 bytes). Strictly
+                                     #   greater, as IMAP LARGER is. Applied by
+                                     #   the server, so smaller mail costs not
+                                     #   even a header fetch. fetch only — a
+                                     #   render of an existing archive ignores it.
+      smaller: 20MB                  #   Optional, default null. Only messages
+                                     #   smaller than this (strictly).
 
     output: ~/Archiv/Hetzner         # REQUIRED. Target directory. eml/ is
                                      #   always created here; pdf/ is added when

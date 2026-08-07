@@ -143,6 +143,8 @@ profiles:
       trash: false                 # optional: include the Trash folder in a recursive scan (default false)
       since: 2026-01-01            # optional: ignore mail before this day
       # until: 2026-12-31          # optional: ignore mail after this day
+      # larger: 5MB                # optional: only mail bigger than (5MB, 500KB, bytes)
+      # smaller: 20MB              # optional: only mail smaller than
     output: ~/Archiv/Hetzner       # target; eml/ and (if pdf) pdf/ go here
     pdf: true                      # optional: also render PDFs (default false)
     # remote_images: false       # load external images when rendering (CLI can force)
