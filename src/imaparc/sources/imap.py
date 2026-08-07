@@ -61,6 +61,7 @@ class ScannedMessage:
     uid: int
     headers: MailHeaders
     received: datetime | None = None
+    size: int | None = None  # RFC822.SIZE in octets, for the size rules
 
 
 def _decode_mime(raw: bytes | None) -> str:
@@ -201,35 +202,55 @@ class ImapConnection:
         return by_flag or by_name
 
     def scan(
-        self, folder: str, *, since: date | None = None
+        self,
+        folder: str,
+        *,
+        since: date | None = None,
+        larger: int | None = None,
+        smaller: int | None = None,
     ) -> tuple[int, list[ScannedMessage]]:
         """List candidate messages in ``folder`` with their envelope headers.
 
-        ``since`` narrows the server-side search (IMAP ``SINCE``) to messages on
-        or after that day; ``None`` scans the whole folder. Only headers are
-        fetched here — bodies are pulled later, per match, via :meth:`fetch_body`.
+        All three bounds narrow the *server-side* search, so excluded messages
+        cost not even a header fetch: ``since`` becomes IMAP ``SINCE``, ``larger``
+        and ``smaller`` become ``LARGER``/``SMALLER`` (octets, both strict).
+        ``None`` means no bound. Only headers are fetched here — bodies are
+        pulled later, per match, via :meth:`fetch_body`.
+
+        These bounds are an optimisation, not the rule: a scan serves every
+        profile watching the folder, so the caller may only narrow where all of
+        them agree. The per-profile decision stays in :func:`profiles.matches`.
 
         Returns:
             The folder ``UIDVALIDITY`` and the candidates sorted by UID.
         """
         info = self._conn.select_folder(folder, readonly=True)
         uidvalidity = int(info[b"UIDVALIDITY"])
-        criteria: list[Any] = ["SINCE", since] if since else ["ALL"]
-        uids = self._conn.search(criteria)
+        criteria: list[Any] = []
+        if since:
+            criteria += ["SINCE", since]
+        if larger is not None:
+            criteria += ["LARGER", larger]
+        if smaller is not None:
+            criteria += ["SMALLER", smaller]
+        uids = self._conn.search(criteria or ["ALL"])
         if not uids:
             return uidvalidity, []
 
         messages: list[ScannedMessage] = []
-        for uid, data in self._conn.fetch(uids, ["ENVELOPE", "INTERNALDATE"]).items():
+        fetched = self._conn.fetch(uids, ["ENVELOPE", "INTERNALDATE", "RFC822.SIZE"])
+        for uid, data in fetched.items():
             env = data.get(b"ENVELOPE")
             if env is None:  # pragma: no cover - server quirk
                 continue
             received = data.get(b"INTERNALDATE")
+            size = data.get(b"RFC822.SIZE")
             messages.append(
                 ScannedMessage(
                     uid=int(uid),
                     headers=_headers_from_envelope(env),
                     received=received if isinstance(received, datetime) else None,
+                    size=int(size) if isinstance(size, int) else None,
                 )
             )
         messages.sort(key=lambda m: m.uid)

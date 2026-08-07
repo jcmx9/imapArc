@@ -80,6 +80,8 @@ _MATCH_OPTIONAL = [
     ),
     ("since", "ignore mail before this day (YYYY-MM-DD)", "since: 2026-01-01"),
     ("until", "ignore mail after this day (YYYY-MM-DD)", "until: 2026-12-31"),
+    ("larger", "only mail bigger than this (5MB, 500KB, bytes)", "larger: 5MB"),
+    ("smaller", "only mail smaller than this", "smaller: 20MB"),
 ]
 # Optional profile.* render settings.
 _PROFILE_OPTIONAL = [

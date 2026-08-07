@@ -5,6 +5,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Size filters in a profile's match rules: `larger` and `smaller`.** Written as
+  `5MB`, `500KB` or a byte count (1 KB = 1024 bytes), strict in both directions
+  like the IMAP `LARGER`/`SMALLER` they map to.
+
+  They narrow the *server-side* search, so excluded mail costs not even a header
+  fetch — but only when every profile watching a folder agrees to a bound. One
+  scan serves them all, so narrowing it to what a single profile wants would drop
+  another profile's mail silently, before any per-profile check ever runs. The
+  decision itself stays in `matches()`, which now sees the message size
+  (`RFC822.SIZE`, fetched alongside the envelope at no extra round trip).
+
+  `fetch` only: a render of an existing archive has no message size to go by.
+
 ## [26.8.12] - 2026-08-03
 
 ### Added

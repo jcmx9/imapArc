@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from imaparc import naming
 from imaparc.accounts import Account, ConfigError
@@ -56,6 +62,10 @@ class Match(BaseModel):
       Trash explicitly in ``folders`` always scans it, regardless of this flag.
     - ``since`` / ``until``: ignore messages dated before ``since`` or after
       ``until`` (inclusive bounds).
+    - ``larger`` / ``smaller``: bounds on the whole message size, written as
+      ``5MB``, ``500KB`` or a byte count. Strict, matching IMAP ``LARGER``/
+      ``SMALLER``. Only ``fetch`` knows a message size, so these have no effect
+      when rendering an existing archive.
     """
 
     domains: list[str] = Field(default_factory=list)
@@ -68,6 +78,48 @@ class Match(BaseModel):
     trash: bool = False  # include the Trash folder in a recursive scan
     since: date | None = None
     until: date | None = None
+    larger: int | None = None  # bytes; strictly greater, like IMAP LARGER
+    smaller: int | None = None  # bytes; strictly smaller, like IMAP SMALLER
+
+    @field_validator("larger", "smaller", mode="before")
+    @classmethod
+    def _as_bytes(cls, value: object) -> object:
+        """Accept ``5MB`` as readily as a byte count."""
+        return parse_size(value) if isinstance(value, str | int) else value
+
+
+_SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([KMG]?B?)\s*$", re.I)
+_UNITS = {
+    "": 1,
+    "B": 1,
+    "KB": 1024,
+    "K": 1024,
+    "MB": 1024**2,
+    "M": 1024**2,
+    "GB": 1024**3,
+    "G": 1024**3,
+}
+
+
+def parse_size(text: str | int) -> int:
+    """Turn ``5MB`` / ``500KB`` / ``1234`` into a byte count.
+
+    Binary units: 1 KB is 1024 bytes, as every mail client displays them. A bare
+    number is bytes, which is also what IMAP ``LARGER``/``SMALLER`` take.
+
+    Raises:
+        ValueError: If the text is not a size.
+    """
+    if isinstance(text, int):
+        if text < 0:
+            raise ValueError(f"size cannot be negative: {text}")
+        return text
+    match = _SIZE.match(text)
+    if match is None:
+        raise ValueError(
+            f"not a size: {text!r} — use e.g. 5MB, 500KB or a number of bytes"
+        )
+    return int(float(match.group(1)) * _UNITS[match.group(2).upper()])
 
 
 class AfterFetch(BaseModel):
@@ -179,7 +231,11 @@ def _addresses_in(headers: MailHeaders, mode: list[AddressField]) -> list[str]:
 
 
 def matches(
-    profile: Profile, headers: MailHeaders, *, received: datetime | None = None
+    profile: Profile,
+    headers: MailHeaders,
+    *,
+    received: datetime | None = None,
+    size: int | None = None,
 ) -> bool:
     """Whether a mail matches a profile's content rules.
 
@@ -191,6 +247,10 @@ def matches(
     missing, ``received`` (the IMAP ``INTERNALDATE``, passed at fetch time) is
     used so ``since``/``until`` still apply to undated mail. When neither is
     known, no date bound can be enforced and the mail is not rejected on age.
+
+    ``size`` is the message's octet count (IMAP ``RFC822.SIZE``). A source that
+    cannot report one passes None, and the size bounds are then not applied —
+    silently dropping every mail would be the worse failure.
     """
     rules = profile.match
 
@@ -222,6 +282,12 @@ def matches(
                 return False
             if rules.until and day > rules.until:
                 return False
+
+    if size is not None:
+        if rules.larger is not None and size <= rules.larger:
+            return False
+        if rules.smaller is not None and size >= rules.smaller:
+            return False
     return True
 
 

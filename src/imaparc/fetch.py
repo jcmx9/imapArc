@@ -279,6 +279,26 @@ def _earliest_since(profiles: list[Profile]) -> date | None:
     return min(s for s in sinces if s is not None)
 
 
+def _common_larger(profiles: list[Profile]) -> int | None:
+    """Smallest ``larger`` bound the whole scan may safely apply.
+
+    None as soon as one profile sets no lower bound — it wants mail of any size,
+    and the scan is shared. Same reasoning as :func:`_earliest_since`.
+    """
+    bounds = [p.match.larger for p in profiles]
+    if not bounds or None in bounds:
+        return None
+    return min(b for b in bounds if b is not None)
+
+
+def _common_smaller(profiles: list[Profile]) -> int | None:
+    """Largest ``smaller`` bound the whole scan may safely apply."""
+    bounds = [p.match.smaller for p in profiles]
+    if not bounds or None in bounds:
+        return None
+    return max(b for b in bounds if b is not None)
+
+
 def _fetch_folder(
     conn: ImapConnection,
     account_name: str,
@@ -298,7 +318,12 @@ def _fetch_folder(
     no state entry, no server call. ``no_server_actions`` archives normally but
     suppresses every label/move/delete, for a first run with a new profile.
     """
-    uidvalidity, candidates = conn.scan(folder, since=_earliest_since(profiles))
+    uidvalidity, candidates = conn.scan(
+        folder,
+        since=_earliest_since(profiles),
+        larger=_common_larger(profiles),
+        smaller=_common_smaller(profiles),
+    )
     delivered = state.delivered_uids(account_name, folder, uidvalidity)
     # Make the state store visible: say how many candidates were already archived
     # on a previous run, so "0 delivered" is never a silent mystery.
@@ -465,7 +490,9 @@ def _match_candidate(
     raw: bytes | None = None
     names: list[str] | None = None
     for profile in profiles:
-        if not matches(profile, message.headers, received=message.received):
+        if not matches(
+            profile, message.headers, received=message.received, size=message.size
+        ):
             continue
         if profile.match.attachments:
             if raw is None:

@@ -9,7 +9,13 @@ import pytest
 
 from imaparc.accounts import Account, ConfigError
 from imaparc.mail.models import MailHeaders
-from imaparc.profiles import Profile, first_match, load_profiles, matches
+from imaparc.profiles import (
+    Profile,
+    first_match,
+    load_profiles,
+    matches,
+    parse_size,
+)
 
 _ACCOUNTS = {"privat": Account(name="privat", host="h", user="u", password="p")}
 
@@ -382,3 +388,64 @@ def test_render_run_hands_the_profile_options_to_the_config(tmp_path: Path) -> N
     assert built["date_format"] == "YYYY"
     assert built["gs_jobs"] == 1
     assert built["render_timeout_ms"] == 9000
+
+
+# --- size limits -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("500", 500),  # bare number = bytes
+        ("5MB", 5 * 1024 * 1024),
+        ("5 MB", 5 * 1024 * 1024),
+        ("5mb", 5 * 1024 * 1024),
+        ("500KB", 500 * 1024),
+        ("2GB", 2 * 1024**3),
+        ("1B", 1),
+        ("1.5MB", int(1.5 * 1024 * 1024)),
+    ],
+)
+def test_parse_size_accepts_the_usual_spellings(text: str, expected: int) -> None:
+    assert parse_size(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "MB", "five MB", "5 megabyte", "-5MB"])
+def test_parse_size_rejects_nonsense(text: str) -> None:
+    with pytest.raises(ValueError):
+        parse_size(text)
+
+
+def test_size_limits_are_parsed_into_the_profile() -> None:
+    p = _profile(larger="5MB", smaller="20MB")
+    assert p.match.larger == 5 * 1024 * 1024  # type: ignore[attr-defined]
+    assert p.match.smaller == 20 * 1024 * 1024  # type: ignore[attr-defined]
+
+
+def test_matches_larger_keeps_only_big_mail() -> None:
+    p = _profile(larger="5MB")
+
+    assert matches(p, _headers(), size=6 * 1024 * 1024)
+    assert not matches(p, _headers(), size=4 * 1024 * 1024)
+    # IMAP LARGER is strictly greater, and this follows it.
+    assert not matches(p, _headers(), size=5 * 1024 * 1024)
+
+
+def test_matches_smaller_keeps_only_small_mail() -> None:
+    p = _profile(smaller="1MB")
+
+    assert matches(p, _headers(), size=500 * 1024)
+    assert not matches(p, _headers(), size=2 * 1024 * 1024)
+
+
+def test_size_rules_ignore_mail_of_unknown_size() -> None:
+    """A source that cannot report a size must not silently drop everything."""
+    p = _profile(larger="5MB")
+
+    assert matches(p, _headers(), size=None)
+
+
+def test_no_size_rule_accepts_any_size() -> None:
+    p = _profile(domains=["hetzner.com"])
+
+    assert matches(p, _headers(from_="x@hetzner.com"), size=99 * 1024 * 1024)
