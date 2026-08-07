@@ -5,6 +5,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **`verify` no longer reports rendered mail as unrendered.** The `-2`/`-3`
+  suffixes are handed out independently by `deliver_eml()` (for the `.eml`) and
+  `_resolve_output()` (for the folder), so a mail delivered twice can end up as
+  `X-2.eml` beside a folder `X-3`. `_unrendered()` compared names, so it called
+  every such mail unrendered — 1014 of them in one real profile, which buried the
+  two genuinely missing PDFs completely. It now falls back to the folder
+  manifests: the Message-ID first (readable from the header block alone), the
+  content hash only when that finds nothing.
+
+### Changed
+- **`verify` summarises repeated warnings per profile**, with `-v` to list them
+  individually. An archive can hold hundreds of duplicate folders and one line
+  each makes the report useless. Damage (`FAIL`) is never summarised — a summary
+  is a convenience for the noisy kinds, not a reason to hide the finding that
+  costs data.
+
 ## [26.8.13] - 2026-08-07
 
 ### Added

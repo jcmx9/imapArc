@@ -37,7 +37,7 @@ from imaparc.service import (
 )
 from imaparc.sources.imap import ImapConnection
 from imaparc.state import StateStore
-from imaparc.verify import Severity, verify_profile
+from imaparc.verify import Finding, Severity, verify_profile
 from imaparc.verify import exit_code as verify_exit_code
 
 logger = logging.getLogger(__name__)
@@ -639,12 +639,17 @@ def _select_account(accounts: dict[str, Account], name: str | None) -> Account:
 def verify(
     profile_file: _ProfilesOpt = DEFAULT_PROFILES,
     only_profile: _ProfileOpt = None,
+    verbose: _VerboseOpt = False,
 ) -> None:
     """Check the archives for damage, duplicates and leftovers.
 
     Read-only — it reports, it never repairs. Exits 1 only when an archive is
     actually damaged; duplicates and leftovers are reported but lose nothing, so
     they must not make a scheduled check fail.
+
+    Findings of the same kind are summarised per profile; ``-v`` lists them
+    individually. An archive can hold hundreds of duplicate folders, and printing
+    one line each drowns the damage report that actually matters.
     """
     try:
         profiles = load_profiles(profile_file)
@@ -654,12 +659,8 @@ def verify(
     profiles = _select_profiles(profiles, only_profile)
 
     findings = [f for profile in profiles for f in verify_profile(profile)]
-    marks = {Severity.WARN: "[yellow]![/]", Severity.FAIL: "[red]✗[/]"}
-    for finding in findings:
-        console.print(
-            f"{marks[finding.severity]} {finding.profile:<12} "
-            f"{finding.kind:<12} {finding.detail}"
-        )
+    for line in _verify_lines(findings, verbose=verbose):
+        console.print(line)
 
     console.print()
     if not findings:
@@ -671,6 +672,38 @@ def verify(
             + (f", [red]{damaged} of them damage[/]" if damaged else ", none fatal")
         )
     raise typer.Exit(verify_exit_code(findings))
+
+
+def _verify_lines(findings: list[Finding], *, verbose: bool) -> list[str]:
+    """One line per finding, or one summary line per (profile, kind) group.
+
+    Damage is always listed in full: a summary is a convenience for the noisy
+    kinds, never a reason to hide the one finding that costs data.
+    """
+    marks = {Severity.WARN: "[yellow]![/]", Severity.FAIL: "[red]✗[/]"}
+
+    def line(f: Finding) -> str:
+        return f"{marks[f.severity]} {f.profile:<12} {f.kind:<12} {f.detail}"
+
+    if verbose:
+        return [line(f) for f in findings]
+
+    lines: list[str] = []
+    grouped: dict[tuple[str, str], list[Finding]] = {}
+    for finding in findings:
+        if finding.severity is Severity.FAIL:
+            lines.append(line(finding))
+        else:
+            grouped.setdefault((finding.profile, finding.kind), []).append(finding)
+    for (profile, kind), group in grouped.items():
+        if len(group) == 1:
+            lines.append(line(group[0]))
+        else:
+            lines.append(
+                f"{marks[Severity.WARN]} {profile:<12} {kind:<12} "
+                f"{len(group)} findings (-v to list them)"
+            )
+    return lines
 
 
 @app.command(name="install-service")

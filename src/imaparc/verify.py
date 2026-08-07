@@ -12,12 +12,17 @@ whose whole purpose is to stay untouched would be the wrong instinct.
 from __future__ import annotations
 
 import enum
+import hashlib
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 from imaparc.pipeline import MANIFEST, STAGING_PREFIX, read_identity
 from imaparc.profiles import Profile
+
+_HASH_PREFIX = "sha256:"
+_MESSAGE_ID = re.compile(rb"^Message-ID:\s*(.+?)\s*$", re.I | re.M)
 
 
 class Severity(enum.Enum):
@@ -102,6 +107,44 @@ def _folder_findings(pdf_dir: Path, profile: str) -> list[Finding]:
     return findings
 
 
+def _known_identities(pdf_dir: Path) -> set[str]:
+    """Every identity line recorded across the folders' manifests."""
+    lines: set[str] = set()
+    if not pdf_dir.is_dir():
+        return lines
+    for folder in pdf_dir.iterdir():
+        if not folder.is_dir() or folder.name.startswith(STAGING_PREFIX):
+            continue
+        identity = read_identity(folder)
+        if identity:
+            lines.update(identity.splitlines())
+    return lines
+
+
+def _is_rendered_elsewhere(eml: Path, known: set[str]) -> bool:
+    """Whether some folder's manifest describes this ``.eml`` under another name.
+
+    The ``-2``/``-3`` suffixes are handed out independently by ``deliver_eml()``
+    and ``_resolve_output()``, so a mail delivered twice can end up as
+    ``X-2.eml`` beside a folder ``X-3``. Comparing names alone would call that
+    unrendered, which is both wrong and expensive: it buries a genuinely missing
+    PDF among hundreds of false ones.
+
+    The Message-ID is tried first because it is readable from the header block
+    alone; the hash costs reading the whole file and is only computed when the
+    cheap check found nothing.
+    """
+    try:
+        raw = eml.read_bytes()
+    except OSError:  # pragma: no cover - unreadable file, reported elsewhere
+        return False
+    head = re.sub(rb"\r?\n[ \t]+", b" ", raw[:65536].split(b"\r\n\r\n")[0])
+    found = _MESSAGE_ID.search(head)
+    if found and found.group(1).decode("utf-8", "replace").strip() in known:
+        return True
+    return f"{_HASH_PREFIX}{hashlib.sha256(raw).hexdigest()}" in known
+
+
 def _unrendered(eml_dir: Path, pdf_dir: Path, profile: str) -> list[Finding]:
     """``.eml`` files with no folder of their own — never rendered.
 
@@ -111,10 +154,14 @@ def _unrendered(eml_dir: Path, pdf_dir: Path, profile: str) -> list[Finding]:
     rendered = (
         {p.name for p in pdf_dir.iterdir() if p.is_dir()} if pdf_dir.is_dir() else set()
     )
+    known = _known_identities(pdf_dir)
     missing = sorted(
         entry.stem
         for entry in eml_dir.iterdir()
-        if entry.is_file() and entry.suffix == ".eml" and entry.stem not in rendered
+        if entry.is_file()
+        and entry.suffix == ".eml"
+        and entry.stem not in rendered
+        and not _is_rendered_elsewhere(entry, known)
     )
     if not missing:
         return []
