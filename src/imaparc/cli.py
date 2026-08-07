@@ -659,7 +659,6 @@ def verify(
     profiles = _select_profiles(profiles, only_profile)
 
     findings = [f for profile in profiles for f in verify_profile(profile)]
-    marks = {Severity.WARN: "[yellow]![/]", Severity.FAIL: "[red]✗[/]"}
     for line in _verify_lines(findings, verbose=verbose):
         console.print(line)
 
