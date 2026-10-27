@@ -23,7 +23,12 @@ from imaparc.bootstrap import init_config, profile_block, render_profiles_file
 from imaparc.config import ToolPaths
 from imaparc.console import console
 from imaparc.doctor import Status, exit_code, run_checks
-from imaparc.exceptions import ImapArcError, SourceError, ToolNotFoundError
+from imaparc.exceptions import (
+    BrowserLaunchError,
+    ImapArcError,
+    SourceError,
+    ToolNotFoundError,
+)
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
 from imaparc.profiles import Profile, load_profiles
@@ -523,6 +528,9 @@ def eml(
                 verbosity=verbosity,
             )
         )
+    except BrowserLaunchError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     except KeyboardInterrupt:
         _abort()
     if verbosity > 0:
@@ -875,6 +883,9 @@ def _do_render(
         report = asyncio.run(
             run_render(targets, tools, allow_remote_images, jobs, verbosity)
         )
+    except BrowserLaunchError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     except KeyboardInterrupt:
         _abort()
     if verbosity > 0:

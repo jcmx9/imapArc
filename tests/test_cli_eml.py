@@ -78,3 +78,20 @@ def test_name_option_is_used_in_the_basename(tmp_path: Path) -> None:
     assert result.exit_code == 0
     folders = [p for p in tmp_path.iterdir() if p.is_dir()]
     assert "_hetzner_" in folders[0].name
+
+
+@pytest.mark.requires_tools  # ToolPaths.resolve() runs before the browser starts
+def test_missing_chromium_exits_with_an_error_not_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mails = tmp_path / "mails"
+    mails.mkdir()
+    (mails / "a.eml").write_bytes(build_mail())
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-browsers"))
+
+    result = runner.invoke(app, ["eml", str(mails)])
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+    assert "playwright install chromium" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)

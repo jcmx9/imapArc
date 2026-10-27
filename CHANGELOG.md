@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **A missing Chromium build is reported as an error, not a traceback.** When
+  Playwright's cache lacks the revision the installed Playwright expects (each
+  version wants its own, and `playwright install` evicts the others),
+  `eml`/`render`/`all` printed a full Rich traceback ending in Playwright's
+  banner. They now print one `Error:` with the exact install command for the
+  running environment and exit 1. The Playwright driver is also stopped when the
+  launch fails, which it previously was not.
+
 ## [26.8.14] - 2026-08-07
 
 ### Fixed
