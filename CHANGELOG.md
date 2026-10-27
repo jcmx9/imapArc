@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.10.0] - 2026-10-27
+
 ### Fixed
 - **A missing Chromium build is reported as an error, not a traceback.** When
   Playwright's cache lacks the revision the installed Playwright expects (each
