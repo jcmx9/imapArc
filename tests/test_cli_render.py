@@ -55,6 +55,21 @@ def test_render_missing_tools_exits_1(
     assert "Error" in result.output
 
 
+@pytest.mark.requires_tools  # ToolPaths.resolve() runs before the browser starts
+def test_render_missing_chromium_exits_1_with_install_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-browsers"))
+    output = tmp_path / "vault"
+    _eml_under(output, build_mail())
+    profiles = _profiles_yaml(tmp_path, output, name="p", pdf=True)
+
+    result = runner.invoke(app, ["render", "--profiles", str(profiles)])
+
+    assert result.exit_code == 1
+    assert "playwright install chromium" in result.output
+
+
 def test_render_nothing_when_no_profiles(tmp_path: Path) -> None:
     profiles = tmp_path / "profile.yaml"
     profiles.write_text("profiles: []\n", encoding="utf-8")

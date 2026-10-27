@@ -19,6 +19,7 @@ no request escaped.
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from types import TracebackType
@@ -31,6 +32,9 @@ from playwright.async_api import (
     Route,
     async_playwright,
 )
+from playwright.async_api import Error as PlaywrightError
+
+from imaparc.exceptions import BrowserLaunchError
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,23 @@ def is_allowed_url(url: str, *, allow_remote: bool = False) -> bool:
     return allow_remote and low.startswith(("http://", "https://"))
 
 
+def _launch_failure_message(exc: PlaywrightError) -> str:
+    """A short, actionable message for a failed launch instead of Playwright's banner.
+
+    A missing build is by far the common case: each Playwright version wants its
+    own Chromium revision, and ``playwright install`` evicts the others. The
+    command names *this* interpreter, so it installs into the environment that
+    is actually running (the uv tool, not some other venv).
+    """
+    first_line = exc.message.splitlines()[0] if exc.message else str(exc)
+    if "Executable doesn't exist" not in exc.message:
+        return f"Chromium could not be started: {first_line}"
+    return (
+        "Chromium is not installed for this imapArc environment. Install it with:\n"
+        f"  {sys.executable} -m playwright install chromium"
+    )
+
+
 class BrowserPool:
     """Owns the Chromium process for the duration of a run.
 
@@ -91,9 +112,15 @@ class BrowserPool:
 
     async def __aenter__(self) -> Self:
         self._pw = await async_playwright().start()
-        self._browser = await self._pw.chromium.launch(
-            args=build_launch_args(allow_remote=self._allow_remote)
-        )
+        try:
+            self._browser = await self._pw.chromium.launch(
+                args=build_launch_args(allow_remote=self._allow_remote)
+            )
+        except PlaywrightError as exc:
+            # __aexit__ does not run when __aenter__ raises, so stop the driver here.
+            await self._pw.stop()
+            self._pw = None
+            raise BrowserLaunchError(_launch_failure_message(exc)) from exc
         if self._allow_remote:
             logger.warning(
                 "Chromium started with remote content ALLOWED — senders can "

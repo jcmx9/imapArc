@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import base64
 import io
+from pathlib import Path
 
 import pikepdf
 import pytest
 
+from imaparc.exceptions import BrowserLaunchError
 from imaparc.html.inline import inline_resources
 from imaparc.mail.models import AttachmentPart
 from imaparc.render.browser import BrowserPool, build_launch_args, is_allowed_url
@@ -174,6 +176,19 @@ def _pdf_text(data: bytes, tmp_path_factory: pytest.TempPathFactory) -> str:
         ["pdftotext", str(path), "-"], capture_output=True, text=True, check=False
     )
     return result.stdout
+
+
+async def test_missing_chromium_raises_launch_error_with_install_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A browser cache without the expected build is a setup error, not a crash."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+
+    with pytest.raises(BrowserLaunchError) as excinfo:
+        async with BrowserPool():
+            pass
+
+    assert "playwright install chromium" in str(excinfo.value)
 
 
 @pytest.mark.requires_chromium

@@ -19,6 +19,10 @@ class SourceError(ImapArcError):
     """A mail source (e.g. an ``eml/`` directory) could not be read."""
 
 
+class BrowserLaunchError(ImapArcError):
+    """Chromium could not be started, typically because its build is missing."""
+
+
 class RenderError(ImapArcError):
     """The email body could not be rendered to PDF."""
 
