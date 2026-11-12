@@ -35,6 +35,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 _DATE = "Mon, 23 Mar 2026 02:18:04 +0100"
+_UV_CACHE = Path(
+    subprocess.run(
+        ["uv", "cache", "dir"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    or Path.home() / ".cache" / "uv"
+)
 
 
 def _load_check() -> ModuleType:
@@ -162,8 +168,14 @@ _EXPECTED = {
 
 @pytest.mark.parametrize(("case", "expected"), sorted(_EXPECTED.items()))
 def test_verdict(archive: dict[str, Path], case: str, expected: str) -> None:
-    profile = check._Profile.load(archive["eml"])
-    assert check.verdict(archive[case], profile) == expected
+    mails = check._Mails.load(list(archive["eml"].glob("*.eml")))
+    assert check.verdict(archive[case], mails)[0] == expected
+
+
+def test_verdict_names_the_proving_eml(archive: dict[str, Path]) -> None:
+    mails = check._Mails.load(list(archive["eml"].glob("*.eml")))
+    assert check.verdict(archive["hash"], mails)[1] == archive["eml"] / "H-2.eml"
+    assert check.verdict(archive["content"], mails)[1] == archive["eml"] / "O.eml"
 
 
 def test_verdict_survives_dropped_ligatures() -> None:
@@ -184,10 +196,82 @@ def test_a_mail_with_almost_nothing_to_compare_is_never_accepted() -> None:
     assert not check._shown_in(mail, check._norm("anything at all"))
 
 
+# --- folders written by `imaparc eml` (the .eml lives inside) ---------------
+
+
+@pytest.fixture
+def loose(tmp_path: Path) -> dict[str, Path]:
+    """A user directory holding `imaparc eml` output beside unrelated files."""
+    directory = tmp_path / "Desktop" / "001"
+    directory.mkdir(parents=True)
+    (directory / "notes.pdf").write_bytes(b"%PDF-1.7")  # the user's own file
+    raw = build_mail(subject="Loose", message_id="<l@x>", date=_DATE)
+    sha = hashlib.sha256(raw).hexdigest()
+    name = "2026-03-23_02-18-04_mail_Loose."
+    folder = _folder(directory, name, f"<l@x>\nsha256:{sha}", _shown("Loose", "x"))
+    folder.chmod(0o700)
+    (folder / f"{name}.eml").write_bytes(raw)
+    (folder / f"{name}.eml").chmod(0o400)
+    gone = _folder(directory, "G", "<g@x>\nsha256:" + "0" * 64, _shown("G", "x"))
+    return {"dir": directory, "folder": folder, "gone": gone}
+
+
+def test_eml_folder_is_proven_by_the_eml_inside(loose: dict[str, Path]) -> None:
+    mails = check._Mails.load(list(loose["folder"].glob("*.eml")))
+    result, eml = check.verdict(loose["folder"], mails)
+    assert result == "hash"
+    assert eml is not None and eml.parent == loose["folder"]
+
+
+# --- discovery -------------------------------------------------------------
+
+
+def test_discover_finds_both_kinds_and_honours_excludes(
+    archive: dict[str, Path], loose: dict[str, Path], tmp_path: Path
+) -> None:
+    moved = tmp_path / "alt" / "P"
+    _folder(moved, "H-9", "<h@x>", _pdf([]))  # a previous --move-to target
+    hidden = tmp_path / ".cache" / "x"
+    _folder(hidden, "Y", "<y@x>", _pdf([]))
+
+    found = check.discover(tmp_path, [tmp_path / "alt"], tmp_path / "none.yaml")
+
+    assert {(a.kind, a.path, a.name) for a in found} == {
+        ("profile", archive["root"] / "P", "P"),
+        ("eml", loose["dir"], "mail"),
+    }
+
+
+def test_profiles_yaml_covers_only_unconfigured_archives(
+    archive: dict[str, Path], tmp_path: Path
+) -> None:
+    from imaparc.profiles import load_profiles
+
+    other = tmp_path / "Trennung" / "Mails"
+    (other / "eml").mkdir(parents=True)
+    _folder(other / "pdf", "2026-03-23_02-18-04_RA-X_Betreff", "<z@x>", _pdf([]))
+    config = tmp_path / "profile.yaml"
+    config.write_text(
+        "profiles:\n"
+        "  - name: P\n    account: a\n"
+        f"    output: {archive['root'] / 'P'}\n",
+        encoding="utf-8",
+    )
+
+    found = check.discover(tmp_path, [], config)
+    yaml_file = tmp_path / "generated.yaml"
+    yaml_file.write_text(check._profiles_yaml(found), encoding="utf-8")
+    profiles = load_profiles(yaml_file)
+
+    assert [(p.name, p.output) for p in profiles] == [("RA-X", other)]
+
+
 # --- the shell wrappers, end to end ---------------------------------------
 
 
-def _run(*args: str | Path, stdin: str = "") -> subprocess.CompletedProcess[str]:
+def _run(
+    *args: str | Path, home: Path, stdin: str = ""
+) -> subprocess.CompletedProcess[str]:
     # The environment is already synced for this test run; letting every
     # parallel worker's `uv run` re-sync it serialises them on uv's lock.
     return subprocess.run(
@@ -196,71 +280,134 @@ def _run(*args: str | Path, stdin: str = "") -> subprocess.CompletedProcess[str]
         text=True,
         input=stdin,
         check=False,
-        env={**os.environ, "UV_NO_SYNC": "1"},
+        env={
+            **os.environ,
+            "UV_NO_SYNC": "1",
+            # uv keeps its cache under $HOME; leave it where it already is.
+            "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", str(_UV_CACHE)),
+            "HOME": str(home),
+        },
     )
 
 
-def _list(archive: dict[str, Path], out: Path) -> list[str]:
-    result = _run(_LIST, archive["root"], out)
+def _list(root: Path, out: Path, *extra: str | Path) -> list[str]:
+    result = _run(
+        _LIST, root, out, "--config", out.parent / "none.yaml", *extra, home=root
+    )
     assert result.returncode == 0, result.stderr
     return (out / "rerender.txt").read_text().splitlines()
 
 
+@pytest.fixture
+def home(archive: dict[str, Path], loose: dict[str, Path], tmp_path: Path) -> Path:
+    """A home directory holding one profile archive and one `imaparc eml` dir."""
+    return tmp_path
+
+
 def test_list_selects_exactly_the_provable_folders(
-    archive: dict[str, Path], tmp_path: Path
+    archive: dict[str, Path], loose: dict[str, Path], home: Path
 ) -> None:
-    rerender = _list(archive, tmp_path / "out")
+    rerender = _list(home, home / "out")
 
-    assert sorted(rerender) == sorted([str(archive["hash"]), str(archive["content"])])
-    keep = (tmp_path / "out" / "keep.txt").read_text()
+    assert sorted(rerender) == sorted(
+        str(p) for p in (archive["hash"], archive["content"], loose["folder"])
+    )
+    keep = (home / "out" / "keep.txt").read_text()
     assert ".staging-V" not in keep + "\n".join(rerender)
+    assert str(loose["gone"]) in keep
 
 
-def test_list_writes_nothing_into_the_archive(
-    archive: dict[str, Path], tmp_path: Path
-) -> None:
-    before = sorted(p.relative_to(archive["root"]) for p in archive["root"].rglob("*"))
-    _list(archive, tmp_path / "out")
-    after = sorted(p.relative_to(archive["root"]) for p in archive["root"].rglob("*"))
+def test_list_writes_nothing_outside_its_out_dir(home: Path) -> None:
+    before = sorted(home.rglob("*"))
+    _list(home, home / "out")
+    after = [p for p in sorted(home.rglob("*")) if not p.is_relative_to(home / "out")]
     assert before == after
 
 
-def test_apply_moves_listed_folders_out_of_the_archive(
-    archive: dict[str, Path], tmp_path: Path
+def test_apply_moves_folders_below_target_mirroring_home(
+    archive: dict[str, Path], loose: dict[str, Path], home: Path
 ) -> None:
-    out = tmp_path / "out"
-    _list(archive, out)
-    target = tmp_path / "old"
+    out = home / "out"
+    _list(home, out)
+    target = home / "old"
 
-    result = _run(_APPLY, out / "rerender.txt", "--move-to", target, "--yes")
+    result = _run(_APPLY, out / "rerender.txt", "--move-to", target, "--yes", home=home)
 
     assert result.returncode == 0, result.stderr
+    assert (target / "archive" / "P" / "pdf" / "H-3" / "H-3.pdf").is_file()
     assert not archive["hash"].exists()
     assert not archive["content"].exists()
-    assert (target / "P" / "H-3" / "H-3.pdf").is_file()
     for kept in ("hash_gone", "mismatch", "no_eml", "no_text", "no_manifest"):
         assert archive[kept].exists()
     assert len(list(archive["eml"].glob("*.eml"))) == 4
+    # The `imaparc eml` folder's .eml was taken out first and survives beside it.
+    name = loose["folder"].name
+    assert (loose["dir"] / f"{name}.eml").is_file()
+    assert not (target / "Desktop" / "001" / name / f"{name}.eml").exists()
+    assert (target / "Desktop" / "001" / name / f"{name}.pdf").is_file()
+    assert (loose["dir"] / "notes.pdf").is_file()
 
 
-def test_apply_deletes_listed_folders(archive: dict[str, Path], tmp_path: Path) -> None:
-    out = tmp_path / "out"
-    _list(archive, out)
+def test_apply_writes_the_render_commands(loose: dict[str, Path], home: Path) -> None:
+    out = home / "out"
+    _list(home, out)
 
-    result = _run(_APPLY, out / "rerender.txt", "--delete", "--yes")
+    result = _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
+
+    assert result.returncode == 0, result.stderr
+    script = (out / "render.sh").read_text()
+    # Not covered by --config, so rendered through the generated profiles.
+    assert f"imaparc render --profiles {out / 'profiles.yaml'}" in script
+    # Exactly the extracted file, never the whole directory.
+    assert "eml_if_present mail " in script
+    assert f"{loose['folder'].name}.eml" in script
+    assert f"{loose['dir']}\n" not in script
+
+
+def test_render_script_can_run_twice(loose: dict[str, Path], home: Path) -> None:
+    """Once imaparc eml filed the .eml away, a re-run must be a no-op."""
+    out = home / "out"
+    _list(home, out)
+    _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
+    stub = home / "bin"
+    stub.mkdir()
+    (stub / "imaparc").write_text('#!/usr/bin/env bash\necho "$@" >> "$0.log"\n')
+    (stub / "imaparc").chmod(0o755)
+    env_path = f"{stub}:{os.environ['PATH']}"
+
+    for _ in range(2):
+        result = subprocess.run(
+            ["bash", str(out / "render.sh")],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PATH": env_path},
+        )
+        assert result.returncode == 0, result.stderr
+        (loose["dir"] / f"{loose['folder'].name}.eml").unlink(missing_ok=True)
+
+    calls = (stub / "imaparc.log").read_text().splitlines()
+    assert sum(c.startswith("eml ") for c in calls) == 1
+
+
+def test_apply_deletes_listed_folders(archive: dict[str, Path], home: Path) -> None:
+    out = home / "out"
+    _list(home, out)
+
+    result = _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
 
     assert result.returncode == 0, result.stderr
     assert not archive["hash"].exists()
     assert archive["mismatch"].exists()
 
 
-def test_apply_rechecks_a_stale_list(archive: dict[str, Path], tmp_path: Path) -> None:
+def test_apply_rechecks_a_stale_list(archive: dict[str, Path], home: Path) -> None:
     """A folder listed earlier whose .eml has since gone must stay."""
-    out = tmp_path / "out"
-    _list(archive, out)
+    out = home / "out"
+    _list(home, out)
     (archive["eml"] / "H-2.eml").unlink()
 
-    result = _run(_APPLY, out / "rerender.txt", "--delete", "--yes")
+    result = _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
 
     assert result.returncode == 1
     assert "no-eml" in result.stderr
@@ -269,27 +416,32 @@ def test_apply_rechecks_a_stale_list(archive: dict[str, Path], tmp_path: Path) -
 
 
 def test_apply_refuses_folders_the_list_would_keep(
-    archive: dict[str, Path], tmp_path: Path
+    archive: dict[str, Path], home: Path
 ) -> None:
     kept = ("hash_gone", "mismatch", "no_eml", "no_text", "no_manifest")
-    hand_made = tmp_path / "hand.txt"
+    hand_made = home / "hand.txt"
     hand_made.write_text("\n".join(str(archive[k]) for k in kept) + "\n")
 
-    result = _run(_APPLY, hand_made, "--delete", "--yes")
+    result = _run(_APPLY, hand_made, "--delete", "--yes", home=home)
 
     assert result.returncode == 1
     for k in kept:
         assert archive[k].exists()
 
 
-def test_apply_refuses_a_move_target_inside_the_archive(
-    archive: dict[str, Path], tmp_path: Path
+def test_apply_refuses_a_move_target_inside_an_archive(
+    archive: dict[str, Path], home: Path
 ) -> None:
-    out = tmp_path / "out"
-    _list(archive, out)
+    out = home / "out"
+    _list(home, out)
 
     result = _run(
-        _APPLY, out / "rerender.txt", "--move-to", archive["root"] / "old", "--yes"
+        _APPLY,
+        out / "rerender.txt",
+        "--move-to",
+        archive["root"] / "old",
+        "--yes",
+        home=home,
     )
 
     assert result.returncode == 1
@@ -299,12 +451,12 @@ def test_apply_refuses_a_move_target_inside_the_archive(
 
 
 def test_apply_without_confirmation_touches_nothing(
-    archive: dict[str, Path], tmp_path: Path
+    archive: dict[str, Path], home: Path
 ) -> None:
-    out = tmp_path / "out"
-    _list(archive, out)
+    out = home / "out"
+    _list(home, out)
 
-    result = _run(_APPLY, out / "rerender.txt", "--delete", stdin="no\n")
+    result = _run(_APPLY, out / "rerender.txt", "--delete", stdin="no\n", home=home)
 
     assert result.returncode == 1
     assert archive["hash"].exists()

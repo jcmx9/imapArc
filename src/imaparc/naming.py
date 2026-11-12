@@ -23,6 +23,9 @@ _ILLEGAL = re.compile(r'[/\\:*?"<>|]')
 # A run of whitespace and/or underscores collapses to a single underscore, so the
 # name has clean single ``_`` separators throughout.
 _SEPARATORS = re.compile(r"[\s_]+")
+# Punctuation from the mail itself ("Re: Termin am 17. November, 14 Uhr") that
+# only clutters a filename. Treated like a space, so it becomes a separator.
+_PUNCTUATION = re.compile(r"[.,]")
 _ANGLE_ADDRESS = re.compile(r"<([^>]+)>")
 
 # Max bytes for the base name (headroom under the 255-byte limit for a subfolder
@@ -115,10 +118,12 @@ def build_base_name(
     The caller resolves ``timestamp`` (the ``Date`` header, or a fallback such
     as the IMAP ``INTERNALDATE``) before calling.
     """
+    # Only the mail- and user-supplied words lose their punctuation; the date is
+    # formatted exactly as ``date_format`` asks, dots included.
     values = {
         "{date}": format_date(timestamp, date_format),
-        "{profile}": profile_name,
-        "{subject}": subject,
+        "{profile}": _PUNCTUATION.sub(" ", profile_name),
+        "{subject}": _PUNCTUATION.sub(" ", subject),
     }
     result = pattern
     for placeholder, value in values.items():

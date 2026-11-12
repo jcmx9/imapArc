@@ -113,6 +113,23 @@ def test_render_command_end_to_end(tmp_path: Path) -> None:
     assert len(sorted(p for p in (output / "pdf").iterdir() if p.is_dir())) == 2
 
 
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+def test_render_recognises_rendered_mail_under_an_older_name(tmp_path: Path) -> None:
+    """Folders named by an older scheme are found by manifest, not re-rendered."""
+    output = tmp_path / "vault"
+    _eml_under(output, build_mail(subject="Termin am 17. November, 14 Uhr"))
+    profiles = _profiles_yaml(tmp_path, output, name="acme", pdf=True)
+    assert runner.invoke(app, ["render", "--profiles", str(profiles)]).exit_code == 0
+    (folder,) = (p for p in (output / "pdf").iterdir() if p.is_dir())
+    folder.rename(folder.with_name("2026-03-23_acme_Termin_am_17._November,_14_Uhr"))
+
+    again = runner.invoke(app, ["render", "--profiles", str(profiles)])
+
+    assert again.exit_code == 0, again.output
+    assert len([p for p in (output / "pdf").iterdir() if p.is_dir()]) == 1
+
+
 # --- timestamp fallback (moved here with the render orchestration) ----------
 
 

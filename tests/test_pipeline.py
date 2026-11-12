@@ -15,7 +15,7 @@ import pytest
 from imaparc.config import RunConfig, ToolPaths
 from imaparc.mail.parser import parse_mail
 from imaparc.pdf.validate import run_verapdf
-from imaparc.pipeline import _resolve_output, _store, render_mail
+from imaparc.pipeline import ArchiveIndex, _resolve_output, _store, render_mail
 from imaparc.render.browser import BrowserPool
 from tests.mail_builder import build_mail
 
@@ -151,6 +151,69 @@ def test_resolve_output_skips_fully_rendered_same_mail(tmp_path: Path) -> None:
     )
     name, skip = _resolve_output(tmp_path, "m", "id-a")
     assert (name, skip) == ("m", True)
+
+
+def _archived(tmp_path: Path, name: str, identity: str) -> None:
+    _store(
+        tmp_path,
+        name,
+        identity=identity,
+        primary_pdfa=b"M",
+        mailonly_pdfa=None,
+        originals=[],
+    )
+
+
+def test_resolve_output_finds_the_same_mail_under_another_name(
+    tmp_path: Path,
+) -> None:
+    """A changed naming scheme must not render the whole archive a second time."""
+    _archived(tmp_path, "old_name.", "<a@x>\nsha256:aaa")
+
+    name, skip = _resolve_output(
+        tmp_path,
+        "new_name",
+        "<a@x>\nsha256:aaa",
+        existing=ArchiveIndex.scan(tmp_path),
+    )
+
+    assert (name, skip) == ("old_name.", True)
+
+
+def test_resolve_output_finds_a_legacy_folder_by_message_id(tmp_path: Path) -> None:
+    _archived(tmp_path, "legacy", "<a@x>")  # manifest from before 26.8.12
+
+    name, skip = _resolve_output(
+        tmp_path, "new_name", "<a@x>\nsha256:aaa", existing=ArchiveIndex.scan(tmp_path)
+    )
+
+    assert (name, skip) == ("legacy", True)
+
+
+def test_resolve_output_does_not_trust_a_shared_message_id_over_the_hash(
+    tmp_path: Path,
+) -> None:
+    # Same sender-chosen Message-ID, different bytes: a different mail.
+    _archived(tmp_path, "other", "<1@localhost>\nsha256:bbb")
+
+    name, skip = _resolve_output(
+        tmp_path,
+        "new_name",
+        "<1@localhost>\nsha256:aaa",
+        existing=ArchiveIndex.scan(tmp_path),
+    )
+
+    assert (name, skip) == ("new_name", False)
+
+
+def test_archive_index_ignores_staging_and_foreign_folders(tmp_path: Path) -> None:
+    (tmp_path / ".staging-x").mkdir()
+    (tmp_path / ".staging-x" / ".imaparc-manifest").write_text("<a@x>\nsha256:aaa")
+    (tmp_path / "my own folder").mkdir()  # a user's folder, no manifest
+
+    index = ArchiveIndex.scan(tmp_path)
+
+    assert index.find("<a@x>\nsha256:aaa") is None
 
 
 def test_resolve_output_reserves_basename_for_concurrent_renders(

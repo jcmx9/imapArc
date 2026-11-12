@@ -5,6 +5,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Cleaner file names**: `.` and `,` in a subject (or profile name) are treated
+  like spaces, so `Re: Termin am 17. November, 14 Uhr` becomes
+  `Re_Termin_am_17_November_14_Uhr`. A dotted `date_format` is left alone.
+  Existing files keep their names; new mail and re-rendered folders get the new
+  ones.
+- **The rerender scripts cover a whole directory tree**: `rerender-list.sh ROOT
+  OUT_DIR` finds profile archives *and* `imaparc eml` folders below ROOT
+  (`--exclude` skips e.g. a previous move target), writes render profiles for
+  archives no `profile.yaml` covers, and `rerender-apply.sh` takes an
+  `imaparc eml` folder's `.eml` out before setting the folder aside. It then
+  writes `render.sh` with exactly the `imaparc` calls that rebuild what was set
+  aside. `--move-to` now mirrors each folder's path below `$HOME`.
+
+### Fixed
+- **`render` and `eml` recognise an archived mail by its manifest, not its
+  name.** A folder only counted as "already rendered" when it sat under the name
+  the mail would get *now*, so any change to the naming scheme — including the
+  one above — would have rendered every archived mail a second time. Each run
+  now indexes the output directory's manifests first (`ArchiveIndex`).
+
 ## [26.11.1] - 2026-11-12
 
 ### Added

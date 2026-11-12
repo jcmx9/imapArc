@@ -222,15 +222,15 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 
 ### Re-rendering an archive with a newer version
 
-`imaparc render` never overwrites: a mail that is already rendered is skipped. To rebuild older PDFs with a newer version, first set the affected PDF folders aside — but only those whose mail provably still exists as `.eml`. Two scripts in the repository do that (they need `uv` and `pdftotext`):
+`imaparc render` never overwrites: a mail that is already rendered is skipped — recognised by its manifest, not by its name, so folders from an older naming scheme count as done too. To rebuild older PDFs with a newer version, first set the affected PDF folders aside — but only those whose mail provably still exists as `.eml`. Two scripts in the repository do that (they need `uv` and `pdftotext`):
 
 ```bash
-./scripts/rerender-list.sh ~/imapArc ~/rerender         # read-only: writes the lists
+./scripts/rerender-list.sh ~ ~/rerender --exclude ~/imapArc-alt    # read-only
 ./scripts/rerender-apply.sh ~/rerender/rerender.txt --move-to ~/imapArc-alt
-imaparc render                                          # rebuilds the folders
+bash ~/rerender/render.sh                                          # rebuilds everything
 ```
 
-`rerender-list.sh` matches every PDF folder to its `.eml` through its manifest — by the hash of the raw bytes or, for manifests older than 26.8.12, by the Message-ID **and** the PDF's own text (sender, date, subject, opening of the body). Never by name. `rerender.txt` holds the folders that can safely be rebuilt; `keep.txt` the rest with a reason. `rerender-apply.sh` re-checks the list before acting, asks for confirmation and moves (`--move-to`, reversible, target outside the archive) or deletes (`--delete`).
+`rerender-list.sh` searches the given directory for both kinds of archive: profile archives (`eml/` + `pdf/`) and folders written by `imaparc eml` (with the `.eml` inside). Every PDF folder is matched to its `.eml` through its manifest — by the hash of the raw bytes or, for manifests older than 26.8.12, by the Message-ID **and** the PDF's own text (sender, date, subject, opening of the body). Never by name. `rerender.txt` holds the folders that can safely be rebuilt; `keep.txt` the rest with a reason; `profiles.yaml` render profiles for archives no `profile.yaml` covers. `rerender-apply.sh` re-checks the list before acting, asks for confirmation and moves (`--move-to`, reversible, under the path relative to `~`) or deletes (`--delete`). For `imaparc eml` folders it first takes the `.eml` out and places it beside the folder. Afterwards `render.sh` holds exactly the `imaparc` calls that rebuild what was set aside — with cleaned-up names.
 
 ## Options
 

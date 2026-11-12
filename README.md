@@ -223,15 +223,15 @@ Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, konta
 
 ### Archiv mit neuer Version neu rendern
 
-`imaparc render` überschreibt nie: Eine bereits gerenderte Mail wird übersprungen. Wer ältere PDFs mit einer neueren Version neu erzeugen will, räumt deshalb zuerst die betreffenden PDF-Ordner beiseite — aber nur die, deren Mail nachweislich noch als `.eml` vorliegt. Dafür gibt es zwei Skripte im Repository (benötigen `uv` und `pdftotext`):
+`imaparc render` überschreibt nie: Eine bereits gerenderte Mail wird übersprungen — erkannt am Manifest, nicht am Namen, sodass auch Ordner aus einem älteren Namensschema als erledigt gelten. Wer ältere PDFs mit einer neueren Version neu erzeugen will, räumt deshalb zuerst die betreffenden PDF-Ordner beiseite — aber nur die, deren Mail nachweislich noch als `.eml` vorliegt. Dafür gibt es zwei Skripte im Repository (benötigen `uv` und `pdftotext`):
 
 ```bash
-./scripts/rerender-list.sh ~/imapArc ~/rerender         # nur lesend: erstellt die Listen
+./scripts/rerender-list.sh ~ ~/rerender --exclude ~/imapArc-alt    # nur lesend
 ./scripts/rerender-apply.sh ~/rerender/rerender.txt --move-to ~/imapArc-alt
-imaparc render                                          # erzeugt die Ordner neu
+bash ~/rerender/render.sh                                          # erzeugt alles neu
 ```
 
-`rerender-list.sh` ordnet jeden PDF-Ordner über sein Manifest der `.eml` zu — über den Hash der Rohdaten oder, bei Manifesten vor 26.8.12, über die Message-ID **und** den Text der PDF selbst (Absender, Datum, Betreff, Textanfang). Nie über den Namen. `rerender.txt` enthält die Ordner, die sicher neu entstehen können; `keep.txt` die übrigen mit Grund. `rerender-apply.sh` prüft die Liste vor dem Verschieben erneut, fragt nach und verschiebt (`--move-to`, umkehrbar, Ziel außerhalb des Archivs) oder löscht (`--delete`).
+`rerender-list.sh` durchsucht den angegebenen Ordner nach beiden Archivarten: Profil-Archiven (`eml/` + `pdf/`) und Ordnern von `imaparc eml` (mit der `.eml` im Ordner). Jeder PDF-Ordner wird über sein Manifest der `.eml` zugeordnet — über den Hash der Rohdaten oder, bei Manifesten vor 26.8.12, über die Message-ID **und** den Text der PDF selbst (Absender, Datum, Betreff, Textanfang). Nie über den Namen. `rerender.txt` enthält die Ordner, die sicher neu entstehen können; `keep.txt` die übrigen mit Grund; `profiles.yaml` Render-Profile für Archive, die keine `profile.yaml` abdeckt. `rerender-apply.sh` prüft die Liste vor dem Verschieben erneut, fragt nach und verschiebt (`--move-to`, umkehrbar, unter dem Pfad relativ zu `~`) oder löscht (`--delete`). Bei `imaparc eml`-Ordnern holt es die `.eml` vorher heraus und legt sie daneben. Anschließend enthält `render.sh` genau die `imaparc`-Aufrufe, die das Beiseitegelegte neu erzeugen — mit bereinigten Namen.
 
 ## Optionen
 
