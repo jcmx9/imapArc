@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.9] - 2026-11-12
+
 ### Fixed
 - **Times are local time, consistently.** The `.eml` name, the PDF name and the
   header block each computed the time differently: `fetch` used imapclient's
