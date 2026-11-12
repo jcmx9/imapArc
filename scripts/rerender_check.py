@@ -26,7 +26,8 @@ Usage::
 
     python rerender_check.py list ROOT OUT_DIR [--exclude DIR]... [--config FILE]
     python rerender_check.py recheck LIST
-    python rerender_check.py commands OUT_DIR
+    python rerender_check.py commands OUT_DIR [INBOX]
+    python rerender_check.py collect OUT_DIR INBOX
 
 ``list`` writes to OUT_DIR: ``rerender.txt`` (one folder per line),
 ``keep.txt`` (``REASON<TAB>FOLDER``), ``archives.tsv`` (what was found) and
@@ -34,8 +35,10 @@ Usage::
 for ``imaparc eml`` to file into the archive).
 ``recheck`` re-validates a list right before it is applied and prints
 ``profile<TAB>FOLDER`` or ``eml<TAB>FOLDER<TAB>EML`` per verified folder;
-rejected ones go to stderr. ``commands`` turns OUT_DIR/applied.tsv into
-OUT_DIR/render.sh. Nothing here writes outside OUT_DIR.
+rejected ones go to stderr. ``commands`` writes OUT_DIR/collect.sh and
+OUT_DIR/render.sh (INBOX defaults to ~/imapArc/emlinput); ``collect`` is what
+collect.sh runs — it moves the pending ``.eml`` files into INBOX. Apart from
+``collect``, nothing here writes outside OUT_DIR.
 """
 
 from __future__ import annotations
@@ -56,10 +59,13 @@ from imaparc.html.to_text import html_to_text
 from imaparc.mail.models import ParsedMail
 from imaparc.mail.parser import parse_mail
 from imaparc.profiles import EML_ARCHIVE, archived_eml_dir, load_profiles
+from imaparc.sources.deliver import file_away
 
 MANIFEST = ".imaparc-manifest"
 HASH_PREFIX = "sha256:"
 DEFAULT_CONFIG = Path.home() / ".config" / "imaparc" / "profile.yaml"
+# Where collect.sh gathers every loose .eml before `imaparc eml` files it away.
+DEFAULT_INBOX = Path.home() / "imapArc" / "emlinput"
 
 # Never searched: macOS caches, the trash, the eml-Archiv (rendered mail, not
 # loose) and the pdf-Löscharchiv (folders already set aside — finding them again
@@ -390,15 +396,8 @@ def _recheck(listing: Path) -> int:
     return 1 if rejected else 0
 
 
-def _commands(out_dir: Path) -> int:
-    """Write render.sh: the imaparc calls that rebuild and file everything.
-
-    ``imaparc render`` renders the inboxes of the configured profiles and moves
-    each rendered ``.eml`` to its ``eml-Archiv``. Every other ``.eml`` — loose
-    in ``loose.txt``, or taken out of an ``imaparc eml`` folder by the apply
-    step — goes through ``imaparc eml``, which derives its profile from its
-    headers and files it the same way.
-    """
+def _pending(out_dir: Path) -> list[Path]:
+    """The ``.eml`` files still to collect: ``loose.txt`` plus extracted ones."""
     files: list[str] = []
     loose = out_dir / "loose.txt"
     if loose.exists():
@@ -406,28 +405,76 @@ def _commands(out_dir: Path) -> int:
     applied = out_dir / "applied.tsv"
     rows = applied.read_text(encoding="utf-8").splitlines() if applied.exists() else []
     files += [path for kind, path in (r.split("\t", 1) for r in rows) if kind == "eml"]
+    return [Path(f) for f in dict.fromkeys(files)]
 
-    lines = [
+
+def _collect(out_dir: Path, inbox: Path) -> int:
+    """Move every pending ``.eml`` into ``inbox``, logging where each came from.
+
+    Same guarantees as the archive: written atomically, never overwritten (a
+    different mail under a taken name becomes ``-2``), an identical copy reused,
+    and the source only removed once the copy exists. A file already gone was
+    collected by an earlier run, so running again is harmless.
+    """
+    log = inbox / "emlinput.log"
+    moved = 0
+    for source in _pending(out_dir):
+        if not source.is_file():
+            continue
+        raw = source.read_bytes()
+        [target] = file_away(source, raw, [(inbox, source.stem)])
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(f"{source}\t{target.name}\n")
+        moved += 1
+    print(f"{moved} .eml collected into {inbox} (log: {log})")
+    return 0
+
+
+def _commands(out_dir: Path, inbox: Path) -> int:
+    """Write collect.sh and render.sh, run in that order by the user.
+
+    ``collect.sh`` moves every ``.eml`` that is not in a configured profile's
+    inbox — loose in ``loose.txt``, or taken out of an ``imaparc eml`` folder by
+    the apply step — into ``inbox``, so it can be looked through before
+    anything is rendered. ``render.sh`` then runs ``imaparc render`` for the
+    configured profiles and ``imaparc eml`` on ``inbox``: each mail's profile
+    comes from its headers, its PDF lands in the archive and its ``.eml`` in the
+    ``eml-Archiv``.
+    """
+    repo = Path(__file__).resolve().parent.parent
+    collect = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        f"# Moves the .eml files listed in {out_dir}/loose.txt (and those taken",
+        f"# out of mail folders) into {inbox}. Logged in emlinput.log there.",
+        "# Files already moved are skipped, so this can simply be run again.",
+        "uv run --quiet --project "
+        + shlex.quote(str(repo))
+        + " python "
+        + shlex.quote(str(repo / "scripts" / "rerender_check.py"))
+        + " collect "
+        + shlex.quote(str(out_dir))
+        + " "
+        + shlex.quote(str(inbox)),
+    ]
+    render = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
         "# 1. The configured profiles: render their eml/ inboxes, then archive.",
         "imaparc render",
         "",
-        "# 2. Every other .eml: profile from its headers, same archive.",
-        "# Files already filed away by an earlier run are gone and skipped, so",
-        "# this script can simply be run again after an interruption.",
-        "files=()",
-        'add() { if [[ -e "$1" ]]; then files+=("$1"); fi; }',
-        *(f"add {shlex.quote(f)}" for f in dict.fromkeys(files)),
-        "if [[ ${#files[@]} -gt 0 ]]; then",
-        "    printf '%s\\0' \"${files[@]}\" | xargs -0 imaparc eml",
+        f"# 2. Everything collected into {inbox}: profile from the headers.",
+        f"if [[ -d {shlex.quote(str(inbox))} ]]; then",
+        f"    imaparc eml {shlex.quote(str(inbox))}",
         "fi",
     ]
-    script = out_dir / "render.sh"
-    script.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    script.chmod(0o755)
-    print(script)
+    for name, lines in (("collect.sh", collect), ("render.sh", render)):
+        script = out_dir / name
+        script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        script.chmod(0o755)
+        print(script)
     return 0
 
 
@@ -448,8 +495,11 @@ def main(argv: list[str]) -> int:
         return _list(Path(argv[1]), Path(argv[2]), excludes, config)
     if len(argv) == 2 and argv[0] == "recheck":
         return _recheck(Path(argv[1]))
-    if len(argv) == 2 and argv[0] == "commands":
-        return _commands(Path(argv[1]))
+    if len(argv) in (2, 3) and argv[0] == "commands":
+        inbox = Path(argv[2]) if len(argv) == 3 else DEFAULT_INBOX
+        return _commands(Path(argv[1]), inbox)
+    if len(argv) == 3 and argv[0] == "collect":
+        return _collect(Path(argv[1]), Path(argv[2]))
     print(__doc__, file=sys.stderr)
     return 2
 

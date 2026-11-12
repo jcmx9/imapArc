@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Rerender: collect first, render second.** `rerender-apply.sh` now writes
+  `collect.sh`, which gathers every `.eml` outside the configured profile
+  inboxes in `~/imapArc/emlinput` (never overwriting, identical copies merged,
+  origin logged in `emlinput.log`), and `render.sh`, which runs
+  `imaparc render` and then `imaparc eml ~/imapArc/emlinput`. In between the
+  collected mail can be looked through. Both can be rerun after an interruption.
+
 ## [26.11.4] - 2026-11-12
 
 ### Changed
