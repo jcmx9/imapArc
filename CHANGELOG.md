@@ -5,6 +5,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Run summary wording**: attachments that could not become pages are
+  reported as embedded in the PDF, no longer as "originals kept" — there are no
+  separate attachment files since 26.11.6.
+
 ## [26.11.6] - 2026-11-12
 
 ### Changed

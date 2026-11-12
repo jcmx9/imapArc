@@ -193,7 +193,7 @@ async def _render_profile(
                         "  %s  %d attachment(s)%s",
                         result.basename,
                         len(parsed.attachments),
-                        "" if result.complete else ", some kept as originals",
+                        "" if result.complete else ", some embedded as files",
                     )
                 if path.parent == inbox:
                     pending.append((path, result.basename))
