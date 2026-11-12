@@ -289,12 +289,17 @@ async def test_both_renditions_produce_valid_pdfs() -> None:
     assert faithful != reflowed
 
 
+def _is_landscape(pdf: bytes) -> bool:
+    with pikepdf.open(io.BytesIO(pdf)) as doc:
+        box = doc.pages[0].mediabox
+        return (float(box[2]) - float(box[0])) > (float(box[3]) - float(box[1]))
+
+
 @pytest.mark.requires_chromium
-async def test_reflowed_switches_wide_mail_to_landscape() -> None:
-    import io
-
-    import pikepdf
-
+async def test_reflowed_scales_wide_mail_down_but_stays_portrait(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """A mail is archived as A4 portrait however wide it is laid out."""
     narrow = "<html><body><div style='max-width:520px'>schmal</div></body></html>"
     wide = (
         "<html><body><div style='width:1300px;white-space:nowrap'>"
@@ -305,13 +310,29 @@ async def test_reflowed_switches_wide_mail_to_landscape() -> None:
         narrow_pdf = await render_html_to_pdf(ctx, narrow, reflowed_rendition())
         wide_pdf = await render_html_to_pdf(ctx, wide, reflowed_rendition())
 
-    def is_landscape(pdf: bytes) -> bool:
-        with pikepdf.open(io.BytesIO(pdf)) as doc:
-            box = doc.pages[0].mediabox
-            return (float(box[2]) - float(box[0])) > (float(box[3]) - float(box[1]))
+    assert not _is_landscape(narrow_pdf)
+    assert not _is_landscape(wide_pdf)
+    assert "breit" in _pdf_text(wide_pdf, tmp_path_factory)
 
-    assert not is_landscape(narrow_pdf)  # fits A4 portrait → stays portrait
-    assert is_landscape(wide_pdf)  # too wide for portrait → A4 landscape
+
+@pytest.mark.requires_chromium
+async def test_reflowed_wraps_long_pre_lines(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Apple Mail quotes each paragraph as one ``<pre>`` line; it must wrap.
+
+    Unwrapped, a quoted paragraph is laid out thousands of pixels wide and the
+    whole mail gets scaled down to unreadable size. Wrapped, it keeps full size
+    and its text runs over several lines.
+    """
+    paragraph = " ".join(f"wort{i}" for i in range(120))
+    html = f"<html><body><pre>{paragraph}</pre></body></html>"
+    async with BrowserPool() as pool, pool.context() as ctx:
+        pdf = await render_html_to_pdf(ctx, html, reflowed_rendition())
+
+    lines = [ln for ln in _pdf_text(pdf, tmp_path_factory).splitlines() if "wort" in ln]
+    assert len(lines) > 3
+    assert "wort119" in lines[-1]
 
 
 # --- link annotations survive the one-page overview ------------------------
