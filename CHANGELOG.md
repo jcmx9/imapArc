@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.3] - 2026-11-12
+
 ### Added
 - **Every PDF names its mail.** The XMP metadata records the SHA-256 of the
   `.eml` (the manifest's `sha256:` value) and its Message-ID, under an
