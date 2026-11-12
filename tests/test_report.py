@@ -83,6 +83,17 @@ def test_non_compliant_truncates_after_ten() -> None:
     assert "… and 2 more" in summary
 
 
+def test_failed_mails_are_named_first() -> None:
+    report = RunReport()
+    report.add(RenderResult(basename="ok", written=True))
+    report.failed.append("/in/broken mail.eml")
+
+    lines = report.summary().splitlines()
+
+    assert lines[1] == "1 FAILED to render (see the log):"
+    assert lines[2] == "  - broken mail.eml"
+
+
 # --- PDF/A validation ------------------------------------------------------
 
 

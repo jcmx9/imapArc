@@ -5,6 +5,43 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Times are local time, consistently.** The `.eml` name, the PDF name and the
+  header block each computed the time differently: `fetch` used imapclient's
+  conversion with *today's* UTC offset (a summer mail fetched in winter was an
+  hour off), `render` the sender's own offset (an Exchange mail sent at 11:32
+  read 09:32). All three now show local time with the offset valid on the
+  mail's date; the header adds it explicitly — `19.10.26, 11:32 (UTC+2)`.
+  Existing files keep their names.
+- **A mail can no longer be made unarchivable by its headers.** A NUL or other
+  control character in the subject made `fetch` fail on every run; one in the
+  Message-ID made the PDF impossible. Both are stripped where they would break
+  a file name or the PDF metadata.
+- **A foreign PDF with broken metadata in a profile directory no longer aborts
+  `render`, `eml` or `verify`** for that profile.
+- **`verify` no longer overlooks an unrendered mail whose name matches another
+  mail's PDF.** A mail counts as rendered by its content hash only. `render`
+  now takes `X.eml` before `X-2.eml`, so such pairs stop swapping names.
+- **Two runs at once no longer disturb each other**: a second `render`, `all`
+  or `eml` waits for the first, and a PDF or `.eml` is never written over a
+  file another process created in the meantime.
+- A mail that fails to render for any reason is named in the log and listed in
+  the run summary (`N FAILED to render`); the run continues.
+- `eml`: an identical `.eml` already archived under another name is reused
+  instead of copied again; a mistyped `--profiles` path is an error rather than
+  filing everything into `00_Mails`; the browser uses the longest render
+  timeout of the profiles involved; a file changed during the run is left
+  alone. `fetch` reuses an identical archived `.eml` the same way.
+- Embedded file names are stored in the byte order the PDF name tree requires.
+- Rerender scripts: a legacy folder whose name ends in `.pdf` can be applied;
+  `applied.tsv` is appended to, so mail taken out by an earlier apply run is
+  still collected.
+- Help texts of `render`, `eml` and `fetch` describe the flat archive.
+
+### Changed
+- A newly created `eml-Archiv` directory is private (`0700`).
+- Author e-mail in the package metadata; test fixtures use neutral names.
+
 ## [26.11.8] - 2026-11-12
 
 ### Fixed

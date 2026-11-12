@@ -11,6 +11,7 @@ otherwise holds every message in memory before rendering the first page.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 from datetime import UTC, datetime
@@ -54,7 +55,7 @@ async def run_render(
     cli_jobs: int | None,
     verbosity: int,
 ) -> RunReport:
-    """Render each profile's ``eml/`` with its own settings, then validate.
+    """Render each profile's mail with its own settings, then validate.
 
     ``remote_images``/``jobs`` are per-profile; the CLI flags override them for
     the whole run. Each profile gets its own :class:`BrowserPool` and
@@ -156,7 +157,7 @@ async def _render_profile(
     existing = ArchiveIndex.scan(output)
     archive_dir = archived_eml_dir(output)
     inbox = output / "eml"
-    pending: list[tuple[Path, str]] = []
+    pending: list[tuple[Path, str, str]] = []
 
     async def process(path: Path) -> RenderResult | None:
         async with semaphore:
@@ -196,11 +197,19 @@ async def _render_profile(
                         "" if result.complete else ", some embedded as files",
                     )
                 if path.parent == inbox:
-                    pending.append((path, result.basename))
+                    digest = hashlib.sha256(raw).hexdigest()
+                    pending.append((path, result.basename, digest))
                 return result
             except (ImapArcError, OSError) as exc:
                 # One bad mail must not abort the whole profile's render.
                 logger.error("Failed to render %s: %s", path, exc)
+                report.failed.append(str(path))
+                return None
+            except Exception as exc:
+                # Anything else a mail can provoke (the sender controls its
+                # bytes): named, counted, and the run goes on.
+                logger.exception("Failed to render %s: %s", path, exc)
+                report.failed.append(str(path))
                 return None
             finally:
                 progress.advance(task)
@@ -216,10 +225,16 @@ async def _render_profile(
                 logger.error("Unexpected error while rendering a mail: %s", result)
         # Only now, with every render finished: a copy skipped because its twin
         # was still being written finds that PDF in place too.
-        for path, basename in pending:
+        for path, basename, digest in pending:
             if is_rendered(output, basename):
                 try:
-                    file_away(path, path.read_bytes(), [(archive_dir, path.stem)])
+                    data = path.read_bytes()
+                    if hashlib.sha256(data).hexdigest() != digest:
+                        # Not the bytes the PDF was made from: leave it for the
+                        # next run rather than archive a mail no PDF matches.
+                        logger.warning("%s changed while rendering; left", path)
+                        continue
+                    file_away(path, data, [(archive_dir, path.stem)])
                 except OSError as exc:
                     logger.error("Could not archive %s: %s", path, exc)
     finally:

@@ -11,9 +11,10 @@ enforced in code, not by permissions.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import tempfile
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -75,17 +76,57 @@ def write_readonly(path: Path, data: bytes) -> Path:
 
     The parent directory must be writable — wrap the call in :func:`writable_dir`
     if it is already read-only. Returns the path actually written.
+
+    Never-overwrite holds even against another process: the finished temp file
+    is *linked* to its final name, which fails if that name was taken in the
+    meantime — then the next free name is tried. Only where hard links are not
+    supported does this fall back to a rename.
     """
-    target = disambiguate(path)
-    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=".tmp-")
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, target)
-    except BaseException:
+        os.chmod(tmp_name, FILE_MODE)
+        while True:
+            target = disambiguate(path)
+            try:
+                os.link(tmp_name, target)
+            except FileExistsError:
+                continue  # taken since disambiguate() looked: next name
+            except OSError:
+                os.replace(tmp_name, target)  # no hard links on this filesystem
+                return target
+            return target
+    finally:
         Path(tmp_name).unlink(missing_ok=True)
-        raise
-    os.chmod(target, FILE_MODE)
-    return target
+
+
+@contextmanager
+def run_lock(wait_message: Callable[[], None] | None = None) -> Generator[None]:
+    """Hold the per-user lock that serialises rendering runs.
+
+    Two runs writing into one archive at once — a scheduled ``all`` and a
+    right-click ``eml`` — would each sweep the other's temp files and could
+    render one mail twice. So a second run waits for the first; ``wait_message``
+    is called once if it has to. The lock file lives in the temp directory
+    (``IMAPARC_LOCK_DIR`` overrides it) and is released by the OS if the process
+    dies.
+    """
+    directory = Path(
+        os.environ.get("IMAPARC_LOCK_DIR")
+        or Path(tempfile.gettempdir()) / f"imaparc-{os.getuid()}"
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / "render.lock", "w") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if wait_message is not None:
+                wait_message()
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)

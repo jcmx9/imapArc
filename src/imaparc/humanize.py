@@ -4,17 +4,29 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from imaparc.naming import to_local
+
 
 def format_date_human(dt: datetime | None) -> str:
     """Return a readable date string for the mail header block.
 
-    ``23.03.26, 02:18`` (as Thunderbird prints it), in the datetime's own
-    timezone. Empty string for a missing date — separate from the filename
-    date format.
+    ``23.03.26, 02:18 (UTC+1)`` — local time, with the offset it is given in, so
+    the line is unambiguous on its own. A naive datetime is shown as it is,
+    without an offset. Empty string for a missing date. Deliberately separate
+    from the filename date format.
     """
     if dt is None:
         return ""
-    return dt.strftime("%d.%m.%y, %H:%M")
+    local = to_local(dt) or dt
+    text = local.strftime("%d.%m.%y, %H:%M")
+    offset = local.utcoffset()
+    if offset is None:
+        return text
+    minutes = int(offset.total_seconds()) // 60
+    sign = "+" if minutes >= 0 else "-"
+    hours, rest = divmod(abs(minutes), 60)
+    zone = f"UTC{sign}{hours}" + (f":{rest:02d}" if rest else "")
+    return f"{text} ({zone})"
 
 
 def format_file_size(num_bytes: int) -> str:

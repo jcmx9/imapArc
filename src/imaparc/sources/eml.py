@@ -11,11 +11,27 @@ Files are yielded in basename order. imapArc names them
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
 from imaparc.exceptions import SourceError
 from imaparc.sources.base import RawMail
+
+_SUFFIXED = re.compile(r"^(.*)-(\d+)$")
+
+
+def _chain_order(path: Path) -> tuple[str, int]:
+    """Sort ``X.eml`` before ``X-2.eml`` before ``X-10.eml``.
+
+    Plain name order puts ``X-2.eml`` first (``-`` sorts before ``.``), so of
+    two mails sharing a base name the *second* delivered was rendered first and
+    took the unsuffixed PDF name — every such pair ended up with swapped names.
+    """
+    match = _SUFFIXED.match(path.stem)
+    if match:
+        return match.group(1), int(match.group(2))
+    return path.stem, 0
 
 
 class EmlSource:
@@ -41,9 +57,12 @@ class EmlSource:
         size of the archive rather than with concurrency.
         """
         return sorted(
-            entry
-            for entry in self._path.iterdir()
-            if entry.is_file() and entry.suffix == ".eml"
+            (
+                entry
+                for entry in self._path.iterdir()
+                if entry.is_file() and entry.suffix == ".eml"
+            ),
+            key=_chain_order,
         )
 
     def __iter__(self) -> Iterator[RawMail]:

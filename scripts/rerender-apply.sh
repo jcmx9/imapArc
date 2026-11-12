@@ -129,8 +129,10 @@ main() {
         [[ "${answer}" == "yes" ]] || { echo "Aborted."; exit 1; }
     fi
 
+    # Appended to, never truncated: a .eml taken out of its folder by an
+    # earlier run must still be listed when collect.sh runs.
     local applied="${out_dir}/applied.tsv" dest loose done_count=0
-    : >"${applied}"
+    touch "${applied}"
     while IFS=$'\t' read -r kind folder eml; do
         if [[ "${mode}" == "move" ]]; then
             dest="$(move_destination "${folder}")"

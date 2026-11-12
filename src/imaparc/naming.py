@@ -18,8 +18,10 @@ import unicodedata
 from datetime import datetime
 from email.utils import getaddresses
 
-# Characters illegal on common filesystems, replaced with underscore.
-_ILLEGAL = re.compile(r'[/\\:*?"<>|]')
+# Characters illegal on common filesystems, replaced with underscore — and the
+# control characters (C0, DEL, C1): a NUL makes every file operation raise, and
+# a subject is the sender's to choose.
+_ILLEGAL = re.compile(r'[/\\:*?"<>|\x00-\x1f\x7f-\x9f]')
 # A run of whitespace and/or underscores collapses to a single underscore, so the
 # name has clean single ``_`` separators throughout.
 _SEPARATORS = re.compile(r"[\s_]+")
@@ -69,6 +71,20 @@ def extract_email_addresses(header_value: str) -> list[str]:
     return [addr for _name, addr in getaddresses([header_value]) if addr]
 
 
+def to_local(dt: datetime | None) -> datetime | None:
+    """Convert an aware datetime to the system's local time; pass others through.
+
+    One rule for every place a mail's time is shown or used in a name. A mail's
+    ``Date`` header carries the *sender's* offset — Exchange stamps UTC — so
+    taking it as written made the same instant read 09:32 in one mail and 11:32
+    in the next. ``astimezone()`` applies the local rules valid *on that date*,
+    so a summer mail keeps summer time whenever it is processed.
+    """
+    if dt is None or dt.tzinfo is None:
+        return dt
+    return dt.astimezone()
+
+
 def format_date(dt: datetime | None, pattern: str) -> str:
     """Format a datetime using YYYY/MM/DD/hh/mm/ss tokens.
 
@@ -110,14 +126,16 @@ def build_base_name(
     """Expand the filename pattern into a sanitized, length-capped base name.
 
     The returned name has no extension — it is the shared basename of the
-    ``.eml`` file, the combined PDF and the PDF subfolder,
-    which is what keeps them traceable to one another.
+    ``.eml`` file and its PDF, which is what keeps them traceable to one
+    another.
 
     Placeholders are ``{date}``, ``{profile}`` and ``{subject}``; unknown
     placeholders are left untouched, and every occurrence of each is replaced.
     The caller resolves ``timestamp`` (the ``Date`` header, or a fallback such
-    as the IMAP ``INTERNALDATE``) before calling.
+    as the IMAP ``INTERNALDATE``) before calling; an aware one is shown in local
+    time (:func:`to_local`), which is what makes fetch and render agree.
     """
+    timestamp = to_local(timestamp)
     # Only the mail- and user-supplied words lose their punctuation; the date is
     # formatted exactly as ``date_format`` asks, dots included.
     values = {

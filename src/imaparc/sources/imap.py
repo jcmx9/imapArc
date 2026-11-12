@@ -139,6 +139,10 @@ class ImapConnection:
             ssl=self._account.ssl,
             timeout=self._timeout,
         )
+        # Keep the offsets the server reports. imapclient's default converts
+        # every date to naive local time with *today's* UTC offset, which puts a
+        # summer mail fetched in winter an hour off; naming converts properly.
+        client.normalise_times = False
         client.login(self._account.user, self._account.password.get_secret_value())
         self._client = client
         return self

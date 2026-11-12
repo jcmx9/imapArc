@@ -25,6 +25,8 @@ class RunReport:
 
     results: list[RenderResult] = field(default_factory=list)
     non_compliant: list[str] = field(default_factory=list)
+    # Mails that could not be rendered at all (their .eml stays where it is).
+    failed: list[str] = field(default_factory=list)
 
     def add(self, result: RenderResult) -> None:
         self.results.append(result)
@@ -49,6 +51,14 @@ class RunReport:
     def summary(self) -> str:
         """Return a short human-readable summary."""
         lines = [f"{len(self.written)} written, {len(self.skipped)} skipped"]
+        if self.failed:
+            # First, and by name: a mail without a PDF is the one line here
+            # that must not be read past.
+            lines.append(f"{len(self.failed)} FAILED to render (see the log):")
+            for path in self.failed[:10]:
+                lines.append(f"  - {Path(path).name}")
+            if len(self.failed) > 10:
+                lines.append(f"  … and {len(self.failed) - 10} more")
         if self.incomplete:
             lines.append(
                 f"{len(self.incomplete)} with attachments not shown as pages "

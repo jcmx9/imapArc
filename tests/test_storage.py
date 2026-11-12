@@ -14,6 +14,7 @@ from imaparc.storage import (
     FILE_MODE,
     disambiguate,
     make_dir,
+    run_lock,
     writable_dir,
     write_readonly,
 )
@@ -86,3 +87,61 @@ def test_write_into_readonly_dir_via_writable_dir(tmp_path: Path) -> None:
         written = write_readonly(d / "note.txt", b"content")
     assert written.read_bytes() == b"content"
     assert _mode(written) == FILE_MODE
+
+
+# --- never-overwrite against another process, and the run lock ---------------
+
+
+def test_write_never_overwrites_a_name_taken_in_the_meantime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another process creates the target between the check and the write."""
+    from imaparc import storage
+
+    real = storage.disambiguate
+    calls = 0
+
+    def racing(path: Path) -> Path:
+        nonlocal calls
+        calls += 1
+        target = real(path)
+        if calls == 1:
+            target.write_bytes(b"theirs")  # the other process wins the name
+        return target
+
+    monkeypatch.setattr(storage, "disambiguate", racing)
+
+    written = write_readonly(tmp_path / "m.pdf", b"ours")
+
+    assert (tmp_path / "m.pdf").read_bytes() == b"theirs"
+    assert written == tmp_path / "m-2.pdf"
+    assert written.read_bytes() == b"ours"
+    assert not list(tmp_path.glob(".tmp-*"))
+
+
+def test_a_second_run_waits_for_the_first() -> None:
+    import threading
+
+    events: list[str] = []
+    first_holds = threading.Event()
+    release_first = threading.Event()
+
+    def first() -> None:
+        with run_lock():
+            first_holds.set()
+            release_first.wait(timeout=5)
+            events.append("first done")
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    assert first_holds.wait(timeout=5)
+
+    def announce() -> None:
+        events.append("second waits")
+        release_first.set()
+
+    with run_lock(announce):
+        events.append("second runs")
+    thread.join(timeout=5)
+
+    assert events == ["second waits", "first done", "second runs"]

@@ -51,7 +51,22 @@ def test_non_eml_argument_exits_with_an_error(tmp_path: Path) -> None:
 
 def _isolated(tmp_path: Path) -> list[str]:
     """Never the user's real profile.yaml or ~/imapArc."""
-    return ["--profiles", str(tmp_path / "none.yaml"), "--root", str(tmp_path / "arc")]
+    profiles = tmp_path / "empty.yaml"
+    profiles.write_text("profiles: []\n", encoding="utf-8")
+    return ["--profiles", str(profiles), "--root", str(tmp_path / "arc")]
+
+
+def test_a_mistyped_profiles_path_is_an_error(tmp_path: Path) -> None:
+    """Otherwise every mail would silently be filed into 00_Mails."""
+    (tmp_path / "a.eml").write_bytes(build_mail())
+
+    result = runner.invoke(
+        app, ["eml", "--profiles", str(tmp_path / "nope.yaml"), str(tmp_path / "a.eml")]
+    )
+
+    assert result.exit_code == 1
+    assert "not found" in result.output
+    assert (tmp_path / "a.eml").exists()
 
 
 @pytest.mark.requires_chromium

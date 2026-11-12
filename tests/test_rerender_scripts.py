@@ -480,6 +480,44 @@ def test_collect_gathers_every_pending_eml_and_can_run_twice(
     assert f"{extracted}\t{extracted.name}" in log
 
 
+def test_a_legacy_folder_named_like_a_pdf_can_be_applied(
+    archive: dict[str, Path], home: Path
+) -> None:
+    """Dots were kept in names until 26.11.2, so a folder may end in ".pdf"."""
+    raw = build_mail(subject="Scan", message_id="<s@x>", date=_DATE)
+    (archive["eml"] / "S.eml").write_bytes(raw)
+    sha = hashlib.sha256(raw).hexdigest()
+    folder = _folder(
+        archive["root"] / "P" / "pdf", "Fwd_scan.pdf", f"<s@x>\nsha256:{sha}", _pdf([])
+    )
+    out = home / "out"
+    assert str(folder) in _list(home, out)
+
+    result = _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
+
+    assert result.returncode == 0, result.stderr
+    assert not folder.exists()
+
+
+def test_a_second_apply_keeps_earlier_extracted_mail_listed(
+    archive: dict[str, Path], loose: dict[str, Path], home: Path
+) -> None:
+    """collect.sh must still find the .eml an earlier apply took out."""
+    out = home / "out"
+    out.mkdir()
+    first, second = out / "one.txt", out / "two.txt"
+    first.write_text(f"{loose['folder']}\n")
+    second.write_text(f"{archive['hash']}\n")
+    extracted = loose["dir"] / f"{loose['folder'].name}.eml"
+
+    for listing in (first, second):
+        result = _run(_APPLY, listing, "--delete", "--yes", home=home)
+        assert result.returncode == 0, result.stderr
+
+    rows = (out / "applied.tsv").read_text().splitlines()
+    assert rows == [f"eml\t{extracted}", f"profile\t{archive['hash']}"]
+
+
 def test_apply_deletes_listed_folders(archive: dict[str, Path], home: Path) -> None:
     out = home / "out"
     _list(home, out)

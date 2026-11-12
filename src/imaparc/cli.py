@@ -42,6 +42,7 @@ from imaparc.service import (
 )
 from imaparc.sources.imap import ImapConnection
 from imaparc.state import StateStore
+from imaparc.storage import run_lock
 from imaparc.verify import Finding, Severity, verify_profile
 from imaparc.verify import exit_code as verify_exit_code
 
@@ -138,6 +139,10 @@ def version_callback(value: bool) -> None:
     if value:
         typer.echo(f"imaparc {__version__}")
         raise typer.Exit()
+
+
+def _announce_wait() -> None:
+    typer.echo("Another imaparc run is rendering — waiting for it to finish …")
 
 
 def _verbosity(silent: bool, verbose: bool, debug: bool) -> int:
@@ -456,11 +461,12 @@ def render(
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
 ) -> None:
-    """Render profiles' eml/ archives into per-mail PDF folders.
+    """Render each profile's archived mail to one PDF per mail.
 
     Renders **every** profile (the ``pdf`` flag is ignored here — asking to
-    render means render), each ``<output>/eml`` into ``<output>/pdf`` under
-    its own name. Needs no ``.env``.
+    render means render): the ``.eml`` in ``eml-Archiv/<profile>/`` become
+    ``<output>/<basename>.pdf``. A mail that already has its PDF is skipped.
+    Needs no ``.env``.
     """
     verbosity = _verbosity(silent, verbose, debug)
     setup_logging(verbosity, log_file)
@@ -500,8 +506,8 @@ def eml(
     Each mail's profile is derived from its headers with the rules in
     profile.yaml (IMAP folder rules are ignored); a mail matching several
     profiles is filed into each, one matching none into <root>/00_Mails. The
-    PDF goes to <profile>/pdf/<basename>/, and once it exists the .eml moves to
-    eml-Archiv/<profile>/ beside the profile directories.
+    PDF is written as <profile>/<basename>.pdf, and once it exists the .eml
+    moves to eml-Archiv/<profile>/ beside the profile directories.
 
     A directory argument takes the ``.eml`` files directly inside it, not in
     subfolders. Needs no ``.env`` and never touches the fetch state; without a
@@ -527,6 +533,11 @@ def eml(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
+    if profile_file != DEFAULT_PROFILES and not profile_file.exists():
+        # Only the default may be absent: a mistyped --profiles would otherwise
+        # file every mail into 00_Mails without a word.
+        typer.echo(f"Error: profile.yaml not found: {profile_file}", err=True)
+        raise typer.Exit(1)
     try:
         profiles = load_profiles(profile_file) if profile_file.exists() else []
     except ConfigError as exc:
@@ -534,17 +545,18 @@ def eml(
         raise typer.Exit(1) from exc
 
     try:
-        report = asyncio.run(
-            run_adhoc(
-                files,
-                profiles=profiles,
-                root=root.expanduser(),
-                name=name,
-                tools=tools,
-                jobs=jobs if jobs is not None else 4,
-                verbosity=verbosity,
+        with run_lock(_announce_wait):
+            report = asyncio.run(
+                run_adhoc(
+                    files,
+                    profiles=profiles,
+                    root=root.expanduser(),
+                    name=name,
+                    tools=tools,
+                    jobs=jobs if jobs is not None else 4,
+                    verbosity=verbosity,
+                )
             )
-        )
     except BrowserLaunchError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -778,7 +790,7 @@ def fetch(
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
 ) -> None:
-    """Fetch new mail from IMAP into the profile eml/ archives (no rendering).
+    """Fetch new mail from IMAP into the profiles' eml-Archiv (no rendering).
 
     ``--dry-run`` only shows which mail each profile would take and what would
     happen to it on the server — nothing is written and nothing is touched.
@@ -814,7 +826,7 @@ def _select_profiles(
 def _abort() -> NoReturn:
     """Report a clean, non-traceback abort on Ctrl-C and exit with code 130.
 
-    Safe by construction: the ``.eml`` write and the per-mail PDF folder are both
+    Safe by construction: the ``.eml`` write and the PDF write are both
     atomic (temp + fsync + rename), and the server is never touched before the
     local archive is durable — so an interruption never loses mail or leaves a
     half-written file. A re-run simply continues.
@@ -837,7 +849,7 @@ def _do_fetch(
     dry_run: bool = False,
     no_server_actions: bool = False,
 ) -> None:
-    """Load config, then fetch the selected profiles into their eml/ archives."""
+    """Load config, then fetch the selected profiles into their eml-Archiv."""
     try:
         accounts = load_accounts(env_file)
         profiles = load_profiles(profile_file, accounts)
@@ -897,9 +909,10 @@ def _do_render(
         raise typer.Exit(1) from exc
 
     try:
-        report = asyncio.run(
-            run_render(targets, tools, allow_remote_images, jobs, verbosity)
-        )
+        with run_lock(_announce_wait):
+            report = asyncio.run(
+                run_render(targets, tools, allow_remote_images, jobs, verbosity)
+            )
     except BrowserLaunchError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

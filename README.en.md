@@ -195,6 +195,8 @@ imaparc --help           # (also: imaparc with no argument)
 
 `imaparc render` needs no `.env` (no IMAP access). Every `fetch` run re-evaluates all mail in the configured folders against the **current** profiles; already-delivered mail is skipped. Change a profile or add one and it takes effect on old mail automatically — no state reset needed. A second `render` run skips already-produced mail.
 
+Times — in file names and in the PDF's header block alike — are always the machine's **local time**, with the daylight-saving rule valid on the mail's date; the header block states the offset as well (`19.10.26, 11:32 (UTC+2)`). Only **one run renders at a time**: a second one (`render`, `all` or `eml`, say a right-click during a scheduled run) waits until the first has finished.
+
 ### Filing single mails: `imaparc eml`
 
 Dragging a message out of Apple Mail, Thunderbird or Outlook into the Finder produces an `.eml` file. `imaparc eml` files such files — wherever they lie — into the archive exactly as `fetch` + `render` would. No `.env`, no server contact:

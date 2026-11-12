@@ -26,7 +26,7 @@ from pydantic import (
 from imaparc import naming
 from imaparc.accounts import Account, ConfigError
 from imaparc.mail.models import MailHeaders
-from imaparc.naming import extract_email_addresses
+from imaparc.naming import extract_email_addresses, to_local
 
 type AddressField = Literal["from", "to", "cc", "bcc"]
 _ALL_FIELDS: list[AddressField] = ["from", "to", "cc", "bcc"]
@@ -154,7 +154,7 @@ class Profile(BaseModel):
 
     ``filename_pattern`` and ``date_format`` live here rather than in the render
     config because **both phases must agree on them**: fetch names the ``.eml``,
-    render names the PDF folder, and the shared base name is what ties a raw mail
+    render names the PDF, and the shared base name is what ties a raw mail
     to its rendition. Reading them from the same profile object is what keeps the
     two halves in step.
     """
@@ -275,7 +275,7 @@ def matches(
         return False
 
     if rules.since or rules.until:
-        effective = headers.date or received
+        effective = to_local(headers.date or received)
         if effective is not None:
             day = effective.date()
             if rules.since and day < rules.since:
@@ -318,17 +318,18 @@ EML_ARCHIVE = "eml-Archiv"
 
 
 def archived_eml_dir(output: Path) -> Path:
-    """Where a profile's ``.eml`` files go once their PDF is written.
+    """Where a profile's ``.eml`` files live.
 
-    ``<output>/eml/`` is the inbox ``fetch`` delivers into; a rendered mail moves
-    on to ``<archive root>/eml-Archiv/<output name>/`` — beside the profiles, not
-    inside one, so the eml/ directories hold only what still waits for its PDF.
+    ``<archive root>/eml-Archiv/<output name>/`` — beside the profile
+    directories, not inside one, so a profile directory holds nothing but PDFs.
+    ``fetch`` delivers here and ``render`` reads from here.
     """
     return output.parent / EML_ARCHIVE / output.name
 
 
 def eml_dirs(profile: Profile) -> tuple[Path, Path]:
-    """A profile's two ``.eml`` locations: the inbox and the archive."""
+    """Where a profile's ``.eml`` may be: the ``eml/`` inbox of versions before
+    26.11.6 (still read, emptied by the next render) and the eml-Archiv."""
     return profile.output / "eml", archived_eml_dir(profile.output)
 
 

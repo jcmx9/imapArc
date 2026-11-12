@@ -83,7 +83,7 @@ _TRIVIAL = [
     "<p>a</p><blockquote type='cite'><p>zitiert</p></blockquote>",
     "<blockquote class='gmail_quote' style='border-left:1px #ccc solid'>q</blockquote>",
     "<ul class='MailOutline'><li>17.11.</li><li>20.11.</li></ul>",  # simple list
-    "<pre style='overflow-wrap: break-word'>Hallo Roland,</pre>",  # Apple Mail quote
+    "<pre style='overflow-wrap: break-word'>Hallo Alex,</pre>",  # Apple Mail quote
     "<font face='Arial' size='2'>Gruß</font>",
     "<a class='moz-txt-link-rfc2396E' href='mailto:a@b.de'>&lt;a@b.de&gt;</a>",
     "<a href='https://example.com/x'>https://example.com/x</a>",

@@ -273,6 +273,35 @@ async def test_an_unreadable_mail_does_not_abort_the_run(tmp_path: Path) -> None
     assert unreadable.exists()  # left untouched, nothing was moved
 
 
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_a_mail_that_breaks_rendering_is_counted_and_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whatever a mail provokes, the run goes on and names the mail."""
+    from imaparc import adhoc
+
+    real = adhoc.render_mail
+
+    async def render(parsed: object, **kwargs: object) -> object:
+        if b"Broken" in kwargs["raw"]:  # type: ignore[operator]
+            raise ValueError("something only this mail triggers")
+        return await real(parsed, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(adhoc, "render_mail", render)
+    inbox = tmp_path / "in"
+    broken = _eml(inbox / "a.eml", subject="Broken")
+    good = _eml(inbox / "b.eml", subject="Good One")
+
+    report = await _run(collect_eml([inbox]), tmp_path / "arc", verbosity=0)
+
+    assert report.failed == [str(broken)]
+    assert broken.exists()  # never archived without its PDF
+    assert len(report.written) == 1 and not good.exists()
+    assert "1 FAILED to render" in report.summary()
+
+
 # 1x1 transparent PNG, served to the browser in the remote-image test.
 _PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"

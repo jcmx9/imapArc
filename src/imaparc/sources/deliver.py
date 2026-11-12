@@ -2,10 +2,10 @@
 
 The archive is a plain directory of ``<basename>.eml`` files, where ``basename``
 is the same ``YYYY-MM-DD_hh-mm-ss_PROFILE_SUBJECT`` used for the PDF — so a mail's
-``.eml`` and its PDFs share one traceable name. Files are ``0400`` (read-only
+``.eml`` and its PDF share one traceable name. Files are ``0400`` (read-only
 content) and the directory ``0700`` (private, owner-manageable); delivery is
-atomic (write to a temp file, fsync, rename) and never overwrites — a basename
-collision is disambiguated (``…-2``).
+atomic (write to a temp file, fsync, link) and never overwrites — a basename
+collision is disambiguated (``…-2``), identical content is reused.
 """
 
 from __future__ import annotations
@@ -16,39 +16,39 @@ from pathlib import Path
 from imaparc.storage import DIR_MODE, make_dir, writable_dir, write_readonly
 
 
-def _already_delivered(eml_dir: Path, raw: bytes, basename: str) -> Path | None:
-    """An existing file under this base name holding exactly ``raw``.
+def _already_delivered(eml_dir: Path, raw: bytes) -> Path | None:
+    """A file in ``eml_dir`` that already holds exactly ``raw``, under any name.
 
-    Walks the disambiguation chain (``mail.eml``, ``mail-2.eml``, …) because an
-    earlier collision may already have pushed the identical copy along it.
+    Any name, because the name is no identity: an earlier collision may have
+    pushed the identical copy along the ``-2`` chain, the naming scheme may have
+    changed since, and file mode names a mail after its PDF. The cheap thing is
+    compared first — a size mismatch rules a file out without reading it, so
+    only true candidates are read off disk.
     """
-    candidate = eml_dir / f"{basename}.eml"
-    counter = 1
-    while candidate.exists():
-        # Compare the cheap thing first: a size mismatch rules it out without
-        # reading a possibly very large message off disk.
+    if not eml_dir.is_dir():
+        return None
+    for candidate in sorted(eml_dir.glob("*.eml")):
         try:
             if candidate.stat().st_size == len(raw) and candidate.read_bytes() == raw:
                 return candidate
         except OSError:  # unreadable: treat as "not a match" and move along
-            pass
-        counter += 1
-        candidate = eml_dir / f"{basename}-{counter}.eml"
+            continue
     return None
 
 
 def deliver_eml(eml_dir: Path, raw: bytes, basename: str) -> Path:
     """Write ``raw`` to ``eml_dir/<basename>.eml`` atomically, never overwriting.
 
-    If a file under this base name already holds **byte-identical** content, that
-    file is returned and nothing is written. Never-overwrite exists to prevent
-    *loss*; identical bytes lose nothing, so a ``-2`` copy of them would be pure
-    redundancy. One mail legitimately arrives twice — Gmail lists a message in
-    All Mail *and* in its label folder, and a mail uploaded back to the server
-    comes back under a fresh UID.
+    If a file in ``eml_dir`` already holds **byte-identical** content — under
+    this base name or any other — that file is returned and nothing is written.
+    Never-overwrite exists to prevent *loss*; identical bytes lose nothing, so
+    a second copy of them would be pure redundancy. One mail legitimately
+    arrives twice — Gmail lists a message in All Mail *and* in its label folder,
+    and a mail uploaded back to the server comes back under a fresh UID.
 
     Args:
-        eml_dir: The profile's ``eml/`` directory (created if missing).
+        eml_dir: The directory to deliver into — a profile's ``eml-Archiv``
+            directory (created if missing).
         raw: The complete RFC-822 message bytes.
         basename: The shared base name (no extension).
 
@@ -56,8 +56,11 @@ def deliver_eml(eml_dir: Path, raw: bytes, basename: str) -> Path:
         The path of the delivered ``0400`` file — an existing identical one, or a
         newly written one (disambiguated when a *different* mail holds the name).
     """
+    if not eml_dir.parent.exists():
+        # A directory imapArc creates for mail (the eml-Archiv) is private.
+        make_dir(eml_dir.parent, readonly=True)
     make_dir(eml_dir)
-    existing = _already_delivered(eml_dir, raw, basename)
+    existing = _already_delivered(eml_dir, raw)
     if existing is not None:
         return existing
     with writable_dir(eml_dir):

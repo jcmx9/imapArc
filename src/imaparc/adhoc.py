@@ -15,6 +15,7 @@ Nothing here can affect what a later ``fetch`` considers delivered.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -154,7 +155,7 @@ async def run_adhoc(
 
     fallback = fallback_profile(root, name)
     targets: dict[Path, _Target] = {}
-    pending: list[tuple[Path, list[tuple[Path, str]]]] = []
+    pending: list[tuple[Path, str, list[tuple[Path, str]]]] = []
 
     def target(profile: Profile) -> _Target:
         # Created on first use, synchronously (no await), so concurrent mails
@@ -189,9 +190,10 @@ async def run_adhoc(
 
     with make_progress(disable=verbosity == 0) as progress:
         task = progress.add_task("Rendering mail", total=len(files))
-        async with BrowserPool(
-            allow_remote=True, timeout_ms=fallback.render_timeout_ms
-        ) as pool:
+        # One browser serves every target, so it gets the most patient of
+        # their timeouts rather than the fallback profile's default.
+        timeout_ms = max(p.render_timeout_ms for p in [*profiles, fallback])
+        async with BrowserPool(allow_remote=True, timeout_ms=timeout_ms) as pool:
 
             async def process(eml: Path) -> list[RenderResult]:
                 done: list[tuple[_Target, RenderResult]] = []
@@ -225,10 +227,22 @@ async def run_adhoc(
                             else:
                                 logger.info("%s → %s", profile.name, eml.name)
                                 logger.debug("  %s", result.basename)
-                        pending.append((eml, [(t.output, r.basename) for t, r in done]))
+                        pending.append(
+                            (
+                                eml,
+                                hashlib.sha256(raw).hexdigest(),
+                                [(t.output, r.basename) for t, r in done],
+                            )
+                        )
                     except (ImapArcError, OSError) as exc:
                         # One unreadable mail must not abort the whole run.
                         logger.error("Failed to render %s: %s", eml, exc)
+                        report.failed.append(str(eml))
+                    except Exception as exc:
+                        # Anything else a mail can provoke (the sender controls
+                        # its bytes): named, counted, and the run goes on.
+                        logger.exception("Failed to render %s: %s", eml, exc)
+                        report.failed.append(str(eml))
                     finally:
                         progress.advance(task)
                 return [r for _, r in done]
@@ -239,14 +253,18 @@ async def run_adhoc(
         # Archive only now, with every render finished: a copy skipped because
         # its twin was still being written then finds that PDF in place too.
         # And never before *every* target's PDF exists.
-        for eml, names in pending:
+        for eml, digest, names in pending:
             if not all(is_rendered(out, name) for out, name in names):
                 continue
             try:
+                data = eml.read_bytes()
+                if hashlib.sha256(data).hexdigest() != digest:
+                    # Not the bytes the PDF was made from: leave it for the
+                    # next run rather than archive a mail no PDF matches.
+                    logger.warning("%s changed while rendering; left", eml)
+                    continue
                 archived = file_away(
-                    eml,
-                    eml.read_bytes(),
-                    [(archived_eml_dir(out), name) for out, name in names],
+                    eml, data, [(archived_eml_dir(out), name) for out, name in names]
                 )
             except OSError as exc:
                 logger.error("Could not archive %s: %s", eml, exc)
