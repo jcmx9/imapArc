@@ -17,6 +17,8 @@ those folders are still recognised, never rewritten.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import hashlib
 import logging
@@ -33,7 +35,7 @@ from imaparc.attachments.classify import effective_mime
 from imaparc.attachments.models import ConversionOutcome
 from imaparc.attachments.to_pdf import convert_attachment
 from imaparc.config import RunConfig
-from imaparc.exceptions import RenderError
+from imaparc.exceptions import ParseError, RenderError
 from imaparc.html.inline import inline_resources
 from imaparc.html.render_html import (
     prepend_header,
@@ -45,7 +47,8 @@ from imaparc.html.render_html import (
 )
 from imaparc.html.to_text import html_is_trivial_wrapper, html_to_text
 from imaparc.humanize import format_date_human, format_file_size
-from imaparc.mail.models import ParsedMail
+from imaparc.mail.models import AttachmentPart, ParsedMail
+from imaparc.mail.parser import parse_mail
 from imaparc.naming import build_base_name
 from imaparc.pdf import provenance
 from imaparc.pdf.merge import count_pages, merge_pdfs
@@ -531,19 +534,79 @@ async def _separator(ctx: BrowserContext, title: str, config: RunConfig) -> _Par
     )
 
 
+# How deep attached mails are followed: a mail attached to a mail attached to a
+# mail. Anything nested deeper is kept as an embedded file with an info page.
+_MAX_MAIL_DEPTH = 3
+
+
+def _attached_mail(
+    att: AttachmentPart, config: RunConfig
+) -> tuple[ParsedMail, bytes] | None:
+    """The mail an attachment *is* — parsed, with its raw bytes — or ``None``.
+
+    ``message/rfc822`` parts and ``.eml`` files: a mail forwarded "as
+    attachment". ``None`` for anything else, for one over the attachment size
+    limit, and for bytes that carry no mail header at all (a file merely named
+    ``.eml``) — those keep their info page and are embedded as they are.
+
+    Some clients base64-encode a ``message/rfc822`` part, which the standard
+    forbids and the parser therefore hands over undecoded; that is undone here.
+    """
+    is_mail = att.content_type == "message/rfc822" or att.filename.lower().endswith(
+        ".eml"
+    )
+    if not is_mail or not att.content or att.size > config.max_attachment_bytes:
+        return None
+    for raw in (att.content, _base64_body(att.content)):
+        if raw is None:
+            continue
+        try:
+            nested = parse_mail(raw)
+        except ParseError:
+            continue
+        headers = nested.headers
+        if headers.from_ or headers.subject or headers.date or headers.message_id:
+            return nested, raw
+    return None
+
+
+def _base64_body(content: bytes) -> bytes | None:
+    """``content``'s body decoded as base64, if that is what it holds."""
+    _, _, body = content.replace(b"\r\n", b"\n").partition(b"\n\n")
+    try:
+        decoded = base64.b64decode(b"".join((body or content).split()), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return decoded or None
+
+
+def _eml_file_name(att: AttachmentPart) -> str:
+    """The name an attached mail is embedded under — always ending in ``.eml``."""
+    name = _safe_attachment_name(att.filename)
+    return name if name.lower().endswith(".eml") else f"{Path(name).stem}.eml"
+
+
 async def _render_attachments(
     ctx: BrowserContext,
     parsed: ParsedMail,
     work: Path,
     config: RunConfig,
     eml_name: str,
+    *,
+    prefix: str = "",
+    depth: int = 1,
 ) -> tuple[list[_Part], list[AttachmentResult], list[tuple[str, str, bytes]]]:
     """Convert attachments to pages.
 
     Returns the parts (each attachment's separator or info page bookmarked
-    "Anhang N: name"), the per-attachment results, and the attachments that did
-    not become pages as ``(name, MIME type, content)`` — embedded into the PDF
-    unless larger than the attachment size limit (the ``.eml`` holds them anyway).
+    "Anhang N: name"), the per-attachment results, and the files to embed as
+    ``(name, MIME type, content)``: the attachments that did not become pages
+    (unless larger than the attachment size limit — the ``.eml`` holds them
+    anyway) and every attached mail.
+
+    An **attached mail** is rendered like a mail — header block, body, text
+    version — behind its separator, and its own attachments follow as
+    "Anhang N.M" (``prefix`` carries the "N."), down to ``_MAX_MAIL_DEPTH``.
     """
 
     async def render_text_cb(filename: str, text: str) -> bytes:
@@ -553,6 +616,40 @@ async def _render_attachments(
     results: list[AttachmentResult] = []
     kept: list[tuple[str, str, bytes]] = []
     for index, att in enumerate(parsed.attachments, start=1):
+        label = f"{prefix}{index}"
+        mark = f"Anhang {label}: {att.filename}"
+        size = format_file_size(att.size)
+
+        attached = _attached_mail(att, config) if depth <= _MAX_MAIL_DEPTH else None
+        if attached is not None:
+            nested, nested_raw = attached
+            mail_parts, _html_ok = await _render_mail_part(ctx, nested, config)
+            pages = sum(count_pages(part.pdf) for part in mail_parts)
+            separator = render_separator(label, att.filename, pages, size)
+            parts.append(_Part(await _render_page(ctx, separator, config), mark))
+            # Its own bookmarks ("E-Mail", "Nur-Text-Version") would read as the
+            # carrier's; the separator's bookmark stands for the whole mail.
+            parts += [_Part(part.pdf) for part in mail_parts]
+            merged = merge_pdfs([part.pdf for part in mail_parts])
+            results.append(
+                AttachmentResult(att.filename, ConversionOutcome.success(merged, pages))
+            )
+            # Embedded as well: opening it in a mail client is one click then.
+            kept.append((_eml_file_name(att), "message/rfc822", nested_raw))
+            sub_parts, sub_results, sub_kept = await _render_attachments(
+                ctx,
+                nested,
+                work,
+                config,
+                eml_name,
+                prefix=f"{label}.",
+                depth=depth + 1,
+            )
+            parts += sub_parts
+            results += sub_results
+            kept += sub_kept
+            continue
+
         outcome = await convert_attachment(
             att,
             render_text=render_text_cb,
@@ -562,25 +659,18 @@ async def _render_attachments(
             timeout_s=config.attachment_timeout_s,
         )
         results.append(AttachmentResult(att.filename, outcome))
-        size = format_file_size(att.size)
-        mark = f"Anhang {index}: {att.filename}"
         if outcome.ok and outcome.pdf_bytes is not None:
-            separator = render_separator(index, att.filename, outcome.page_count, size)
+            separator = render_separator(label, att.filename, outcome.page_count, size)
             parts.append(_Part(await _render_page(ctx, separator, config), mark))
             parts.append(_Part(outcome.pdf_bytes))
         else:
             embedded = att.size <= config.max_attachment_bytes
             if embedded:
-                kept.append(
-                    (
-                        _safe_attachment_name(att.filename),
-                        effective_mime(att),
-                        att.content,
-                    )
-                )
+                name = _safe_attachment_name(att.filename)
+                kept.append((name, effective_mime(att), att.content))
             reason = outcome.reason.message if outcome.reason else ""
             info = render_info(
-                index,
+                label,
                 att.filename,
                 effective_mime(att),
                 size,

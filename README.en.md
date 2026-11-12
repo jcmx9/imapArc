@@ -38,7 +38,7 @@ Names follow the scheme `DATE_TIME_PROFILE_SUBJECT`, configurable per profile. T
 | Content | What for |
 |---------|----------|
 | The mail with a header block (subject, from, date, to/cc) | reads as in a mail client; elaborate mails also get a one-page overview, and every mail a plain-text rendition |
-| The attachments as pages (PDF, images, text) | everything in one file, searchable |
+| The attachments as pages (PDF, images, text — attached mails too, with their attachments) | everything in one file, searchable |
 | **Bookmarks** to the mail, each rendition and each attachment | quick navigation |
 | **The original `.eml`, embedded** | the PDF carries its own original — `imaparc extract` takes it out |
 | **Attachments that cannot become pages** (Word, Excel, ZIP …), embedded | open straight from the PDF reader's attachment panel; an info page points to them |

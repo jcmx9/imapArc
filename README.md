@@ -38,7 +38,7 @@ Der Name folgt dem Schema `DATUM_UHRZEIT_PROFIL_BETREFF` und ist je Profil einst
 | Inhalt | Wozu |
 |--------|------|
 | Die Mail mit Kopfblock (Betreff, Von, Datum, An/CC) | lesbar wie im Mailprogramm; bei aufwendigen Mails zusätzlich eine Ein-Seiten-Übersicht und immer eine Nur-Text-Fassung |
-| Die Anhänge als Seiten (PDF, Bilder, Text) | alles in einer Datei, durchsuchbar |
+| Die Anhänge als Seiten (PDF, Bilder, Text — auch angehängte Mails samt deren Anhängen) | alles in einer Datei, durchsuchbar |
 | **Lesezeichen** zur Mail, zu jeder Fassung und zu jedem Anhang | schnelle Navigation |
 | **Die Original-`.eml`, eingebettet** | die PDF trägt ihr Original in sich — `imaparc extract` holt es heraus |
 | **Anhänge, die keine Seiten werden** (Word, Excel, ZIP …), eingebettet | im PDF-Programm unter „Anhänge“ direkt zu öffnen; eine Info-Seite weist darauf hin |

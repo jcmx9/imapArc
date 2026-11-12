@@ -8,6 +8,7 @@ later, using the same Chromium as the mail body — one font stack, one engine.
 from __future__ import annotations
 
 import functools
+import re
 from html import escape
 from importlib.resources import files
 
@@ -36,8 +37,12 @@ def _render(template: str, **context: object) -> str:
     return _env().get_template(template).render(base_css=_base_css(), **context)
 
 
-def render_separator(index: int, filename: str, pages: int, size: str) -> str:
-    """Render the separator page shown before an attachment's pages."""
+def render_separator(index: int | str, filename: str, pages: int, size: str) -> str:
+    """Render the separator page shown before an attachment's pages.
+
+    ``index`` is the attachment's number — or, inside an attached mail, a
+    dotted one such as ``2.1``.
+    """
     return _render(
         "separator.html.j2",
         index=index,
@@ -48,7 +53,7 @@ def render_separator(index: int, filename: str, pages: int, size: str) -> str:
 
 
 def render_info(
-    index: int,
+    index: int | str,
     filename: str,
     mime: str,
     size: str,
@@ -74,6 +79,19 @@ def render_info(
     )
 
 
+# Private-use characters: Word and Outlook write bullets as Symbol/Wingdings
+# code points (U+F0B7, U+F0A7 …) that mean nothing without that font. No font
+# here has a glyph for them, so Chromium emits ``.notdef`` — and one such glyph
+# makes the whole PDF fail PDF/A. Shown as a plain bullet instead; the .eml
+# keeps what was sent.
+_PRIVATE_USE = re.compile("[\ue000-\uf8ff\U000f0000-\U0010fffd]")
+
+
+def printable(text: str) -> str:
+    """``text`` with private-use characters replaced by a bullet."""
+    return _PRIVATE_USE.sub("\u2022", text)
+
+
 def render_text(
     headers: MailHeaders, text: str, *, show_bcc: bool, date_str: str
 ) -> str:
@@ -81,7 +99,7 @@ def render_text(
     return _render(
         "text.html.j2",
         header_html=_header_fragment(headers, show_bcc=show_bcc, date_str=date_str),
-        text=text,
+        text=printable(text),
     )
 
 
@@ -96,7 +114,7 @@ def render_text_attachment(filename: str, text: str) -> str:
     The content is shown verbatim (pre-wrapped, monospace) under the filename —
     no Markdown interpretation, so the attachment is preserved, not reformatted.
     """
-    return _render("text_attachment.html.j2", filename=filename, text=text)
+    return _render("text_attachment.html.j2", filename=filename, text=printable(text))
 
 
 # Two shaded bands, as Thunderbird prints a mail: subject, sender and date on a

@@ -135,6 +135,14 @@ def test_header_leaves_out_an_empty_recipient_band() -> None:
     assert "Datum:" not in html
 
 
+def test_private_use_bullets_become_real_bullets() -> None:
+    """Word's Symbol-font bullets have no glyph anywhere and break PDF/A."""
+    headers = MailHeaders(from_="a@x.com", subject="Hi")
+    html = render_text(headers, "\uf0b7 eins\n\uf0a7 zwei", show_bcc=True, date_str="")
+    assert "\uf0b7" not in html and "\uf0a7" not in html
+    assert html.count("\u2022") == 2
+
+
 def test_section_separator_shows_title() -> None:
     html = render_section_separator("Nur-Text-Version")
     assert "Nur-Text-Version" in html
