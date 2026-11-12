@@ -18,10 +18,10 @@ class FailureReason(enum.Enum):
     The value is the German text shown on the info page in the combined PDF.
     """
 
-    UNSUPPORTED_TYPE = "Dieser Dateityp wird nicht in die PDF übernommen."
+    UNSUPPORTED_TYPE = "Dieser Dateityp lässt sich nicht als Seiten darstellen."
     ENCRYPTED = "Die Datei ist verschlüsselt und konnte nicht geöffnet werden."
     CORRUPT = "Die Datei ist beschädigt und konnte nicht gelesen werden."
-    TOO_LARGE = "Die Datei ist zu groß und wurde nicht in die PDF übernommen."
+    TOO_LARGE = "Die Datei ist zu groß, um als Seiten dargestellt zu werden."
     TRANSCODE_FAILED = "Die Datei konnte nicht in eine PDF-Seite umgewandelt werden."
     EMPTY = "Die Datei ist leer."
     TIMEOUT = "Die Umwandlung hat zu lange gedauert und wurde abgebrochen."

@@ -132,8 +132,7 @@ async def test_unmatched_mail_is_filed_into_00_mails(tmp_path: Path) -> None:
 
     basename = report.written[0].basename
     assert basename.endswith("_mail_Rechnung_Juli")
-    folder = root / "00_Mails" / "pdf" / basename
-    assert (folder / f"{basename}.pdf").is_file()
+    assert sorted(p.name for p in (root / "00_Mails").iterdir()) == [f"{basename}.pdf"]
     # The PDF exists, so the .eml moved on to the archive — and left the inbox.
     archived = root / "eml-Archiv" / "00_Mails" / f"{basename}.eml"
     assert archived.read_bytes() == build_mail(subject="Rechnung Juli")
@@ -157,7 +156,7 @@ async def test_the_profile_is_derived_from_the_headers(tmp_path: Path) -> None:
 
     basename = report.written[0].basename
     assert "_Amt_" in basename
-    assert (root / "Amt" / "pdf" / basename).is_dir()
+    assert (root / "Amt" / f"{basename}.pdf").is_file()
     assert (root / "eml-Archiv" / "Amt" / f"{basename}.eml").is_file()
     assert not (root / "Other").exists()
     assert not (root / "00_Mails").exists()
@@ -184,7 +183,7 @@ async def test_a_mail_matching_two_profiles_is_filed_into_both(tmp_path: Path) -
     for name in ("Amt", "Anwalt"):
         [archived] = (root / "eml-Archiv" / name).iterdir()
         assert archived.read_bytes() == raw
-        assert (root / name / "pdf" / archived.stem).is_dir()
+        assert (root / name / f"{archived.stem}.pdf").is_file()
     assert not mail.exists()
 
 
@@ -222,7 +221,7 @@ async def test_a_second_copy_is_archived_without_a_second_folder(
 ) -> None:
     root = tmp_path / "arc"
     first = await _run([_eml(tmp_path / "in" / "a.eml")], root)
-    pdf_dir = root / "00_Mails" / "pdf"
+    pdf_dir = root / "00_Mails"
     before = sorted(p.name for p in pdf_dir.iterdir())
 
     again = _eml(tmp_path / "elsewhere" / "copy.eml")
@@ -396,7 +395,11 @@ async def test_two_copies_of_one_mail_produce_one_folder(tmp_path: Path) -> None
 
     report = await _run(collect_eml([inbox]), tmp_path / "arc", verbosity=0)
 
-    folders = list((tmp_path / "arc" / "00_Mails" / "pdf").iterdir())
-    assert len(folders) == 1, f"one mail became {len(folders)} folders: {folders}"
+    pdfs = list((tmp_path / "arc" / "00_Mails").iterdir())
+    assert len(pdfs) == 1, f"one mail became {len(pdfs)} PDFs: {pdfs}"
     assert len(report.written) == 1
     assert len(report.skipped) == 1
+    # Both copies end up archived, even the one skipped while its twin was
+    # still rendering: the archiving pass runs after every render finished.
+    assert list(inbox.glob("*.eml")) == []
+    assert len(list((tmp_path / "arc" / "eml-Archiv" / "00_Mails").iterdir())) == 1

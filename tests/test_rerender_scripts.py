@@ -223,6 +223,60 @@ def test_eml_folder_is_proven_by_the_eml_inside(loose: dict[str, Path]) -> None:
     assert eml is not None and eml.parent == loose["folder"]
 
 
+# --- the flat layout (since 26.11.6) ------------------------------------------
+
+
+@pytest.fixture
+def flat(tmp_path: Path) -> dict[str, Path]:
+    """A flat profile: <root>/F/<mail>.pdf, the .eml in <root>/eml-Archiv/F/."""
+    from imaparc.pdf import provenance
+
+    root = tmp_path / "flatroot"
+    profile, archive = root / "F", root / "eml-Archiv" / "F"
+    profile.mkdir(parents=True)
+    archive.mkdir(parents=True)
+    raw = build_mail(subject="Flat", message_id="<f@x>", date=_DATE)
+    (archive / "drifted-name.eml").write_bytes(raw)
+    proven = profile / "M.pdf"
+    proven.write_bytes(provenance.stamp(_pdf([]), raw, message_id="<f@x>"))
+    gone = profile / "G.pdf"
+    gone.write_bytes(provenance.stamp(_pdf([]), b"gone", message_id=None))
+    foreign = profile / "scan.pdf"
+    foreign.write_bytes(_pdf(["not imapArc's"]))
+    return {"root": root, "proven": proven, "gone": gone, "foreign": foreign}
+
+
+def test_flat_pdfs_are_proven_by_their_recorded_hash(flat: dict[str, Path]) -> None:
+    mails = check._Mails.load(check._profile_emls(flat["proven"].parent))
+    assert check.verdict_pdf(flat["proven"], mails)[0] == "hash"
+    assert check.verdict_pdf(flat["gone"], mails) == ("no-eml", None)
+    assert check.verdict_pdf(flat["foreign"], mails) == ("no-identity", None)
+
+
+def test_discover_finds_a_flat_archive(flat: dict[str, Path], tmp_path: Path) -> None:
+    found, loose_emls = check.discover(tmp_path, [], tmp_path / "none.yaml")
+
+    assert [(a.kind, a.path) for a in found] == [("flat", flat["root"] / "F")]
+    assert loose_emls == []  # the eml-Archiv is never loose
+
+
+def test_apply_sets_flat_pdfs_aside(flat: dict[str, Path], tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    rerender = _list(tmp_path, out)
+    assert rerender == [str(flat["proven"])]
+    target = flat["root"] / "pdf-Löscharchiv"
+
+    result = _run(
+        _APPLY, out / "rerender.txt", "--move-to", target, "--yes", home=tmp_path
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (target / "flatroot" / "F" / "M.pdf").is_file()
+    assert not flat["proven"].exists()
+    assert flat["gone"].exists() and flat["foreign"].exists()
+    assert (out / "applied.tsv").read_text() == f"flat\t{flat['proven']}\n"
+
+
 # --- discovery -------------------------------------------------------------
 
 

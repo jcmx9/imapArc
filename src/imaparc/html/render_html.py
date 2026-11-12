@@ -47,8 +47,21 @@ def render_separator(index: int, filename: str, pages: int, size: str) -> str:
     )
 
 
-def render_info(index: int, filename: str, mime: str, size: str, reason: str) -> str:
-    """Render the info page shown in place of a non-convertible attachment."""
+def render_info(
+    index: int,
+    filename: str,
+    mime: str,
+    size: str,
+    reason: str,
+    *,
+    embedded: bool,
+    eml_name: str,
+) -> str:
+    """Render the info page shown in place of a non-convertible attachment.
+
+    ``embedded`` says whether the attachment itself is embedded in the PDF; it
+    is always contained in the embedded ``.eml`` called ``eml_name``.
+    """
     return _render(
         "info.html.j2",
         index=index,
@@ -56,6 +69,8 @@ def render_info(index: int, filename: str, mime: str, size: str, reason: str) ->
         mime=mime,
         size=size,
         reason=reason,
+        embedded=embedded,
+        eml_name=eml_name,
     )
 
 

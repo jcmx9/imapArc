@@ -5,7 +5,11 @@
     <div class="eyebrow">Anhang {{ index }} &middot; Original</div>
     <div class="title">{{ filename }}</div>
     <div class="explain">{{ reason }}</div>
-    <div class="explain">Die Originaldatei liegt im Ordner und ist in dieses PDF eingebettet.</div>
+    {% if embedded %}
+    <div class="explain">Die Originaldatei ist in dieses PDF eingebettet (Anhänge des PDF-Programms) und zusätzlich in der eingebetteten E-Mail {{ eml_name }} enthalten.</div>
+    {% else %}
+    <div class="explain">Die Originaldatei ist in der eingebetteten E-Mail {{ eml_name }} enthalten.</div>
+    {% endif %}
     <div class="meta">{{ mime }} &middot; {{ size }}</div>
   </div>
 </div>

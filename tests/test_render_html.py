@@ -29,14 +29,30 @@ def test_separator_singular_page() -> None:
 
 def test_info_page_contains_reason_and_type() -> None:
     html = render_info(
-        2, "contract.docx", "application/vnd...", "45 KB", "Dieser Anhang ..."
+        2,
+        "contract.docx",
+        "application/vnd...",
+        "45 KB",
+        "Dieser Anhang ...",
+        embedded=True,
+        eml_name="mail.eml",
     )
     assert "Anhang 2" in html
     assert "contract.docx" in html
     assert "Dieser Anhang ..." in html
     assert "application/vnd..." in html
     assert "45 KB" in html
-    assert "eingebettet" in html  # reassurance line
+    # Where the original is: in this PDF, and in the embedded .eml.
+    assert "in dieses PDF eingebettet" in html
+    assert "eingebetteten E-Mail mail.eml" in html
+
+
+def test_info_page_of_an_attachment_too_large_to_embed() -> None:
+    html = render_info(
+        1, "huge.zip", "application/zip", "2 GB", "", embedded=False, eml_name="m.eml"
+    )
+    assert "in dieses PDF eingebettet" not in html
+    assert "eingebetteten E-Mail m.eml" in html
 
 
 def test_separator_escapes_html_in_filename() -> None:

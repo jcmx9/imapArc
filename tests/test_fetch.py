@@ -702,7 +702,7 @@ def test_run_fetch_delivers_only_matching_mail(tmp_path: Path) -> None:
     report = run_fetch({"test": account}, [profile], state)
 
     assert report.delivered.get("hetzner") == 1
-    eml = tmp_path / "hetzner" / "eml"
+    eml = tmp_path / "eml-Archiv" / "hetzner"
     mails = list(EmlSource(eml))
     assert len(mails) == 1
     assert b"hetzner.com" in mails[0].raw
@@ -742,7 +742,7 @@ def test_profile_change_picks_up_old_mail_without_state_reset(tmp_path: Path) ->
     )
     second = run_fetch({"test": account}, [matching], state)
     assert second.delivered.get("hetzner") == 1
-    assert len(list(EmlSource(tmp_path / "hetzner" / "eml"))) == 1
+    assert len(list(EmlSource(tmp_path / "eml-Archiv" / "hetzner"))) == 1
 
 
 @greenmail
@@ -766,7 +766,7 @@ def test_run_fetch_deletes_source_after_archiving(tmp_path: Path) -> None:
 
     # Archived locally...
     assert report.delivered.get("hetzner") == 1
-    assert len(list(EmlSource(tmp_path / "hetzner" / "eml"))) == 1
+    assert len(list(EmlSource(tmp_path / "eml-Archiv" / "hetzner"))) == 1
     # ...and removed from the server.
     with ImapConnection(account) as conn:
         conn._conn.select_folder("INBOX")
@@ -889,7 +889,7 @@ def test_dry_run_writes_nothing_at_all(tmp_path: Path) -> None:
     )
 
     assert conn.calls == []  # server untouched
-    assert not (output / "eml").exists()  # nothing written
+    assert not (output.parent / "eml-Archiv").exists()  # nothing written
     assert state.delivered_uids("acc", "INBOX", 7) == set()  # no state
     assert report.planned  # but it reported what it would do
 
@@ -936,7 +936,8 @@ def test_no_server_actions_archives_but_leaves_the_server_alone(
     )
 
     assert conn.calls == []  # no label/move/delete
-    assert list((output / "eml").glob("*.eml"))  # but it was archived
+    # Archived — straight into the eml-Archiv beside the profile directory.
+    assert list((output.parent / "eml-Archiv" / output.name).glob("*.eml"))
     assert state.delivered_uids("acc", "INBOX", 7) == {1}  # and recorded
     assert report.total == 1
 
@@ -986,7 +987,7 @@ def test_dry_run_against_a_live_server_changes_nothing(tmp_path: Path) -> None:
 
     assert len(report.planned) == 1
     assert "DELETE" in report.summary()
-    assert not (output / "eml").exists()
+    assert not (output.parent / "eml-Archiv").exists()
 
     # The mail is still on the server, untouched.
     box = imaplib.IMAP4("localhost", 3143)
