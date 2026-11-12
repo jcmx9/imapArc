@@ -5,6 +5,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Every PDF names its mail.** The XMP metadata records the SHA-256 of the
+  `.eml` (the manifest's `sha256:` value) and its Message-ID, under an
+  `imaparc` namespace declared as a PDF/A extension schema. The full PDF also
+  embeds the `.eml` itself as a PDF/A-3 associated file (`/AFRelationship
+  /Source`); `_mailonly.pdf` carries the hash only. A PDF copied out of its
+  folder can thus still be traced to — and even restored as — its mail.
+
+### Changed
+- **New header block**, laid out as Thunderbird prints a mail: subject, sender
+  and date on a light grey band, recipients (To/CC/BCC) on a darker one beneath.
+  The date reads `18.05.26, 16:06`. HTML and plain-text renditions now share one
+  header implementation.
+
 ## [26.11.2] - 2026-11-12
 
 ### Changed

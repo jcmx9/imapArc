@@ -48,6 +48,7 @@ from imaparc.html.to_text import html_is_trivial_wrapper, html_to_text
 from imaparc.humanize import format_date_human, format_file_size
 from imaparc.mail.models import ParsedMail
 from imaparc.naming import build_base_name
+from imaparc.pdf import provenance
 from imaparc.pdf.merge import count_pages, merge_pdfs
 from imaparc.pdf.pdfa import to_pdfa3b
 from imaparc.render.browser import BrowserPool
@@ -161,6 +162,22 @@ async def render_mail(
         else:
             primary_pdfa = mail_only_pdfa
             mailonly_pdfa = None
+        # Each PDF records the mail it shows; the full PDF also carries the .eml
+        # itself. The body-only copy gets the hash alone — embedding the mail
+        # (attachments included) twice would double the folder for nothing.
+        message_id = parsed.headers.message_id
+        primary_pdfa = await asyncio.to_thread(
+            provenance.stamp,
+            primary_pdfa,
+            raw,
+            message_id=message_id,
+            eml_name=f"{basename}.eml",
+            mod_date=timestamp,
+        )
+        if mailonly_pdfa is not None:
+            mailonly_pdfa = await asyncio.to_thread(
+                provenance.stamp, mailonly_pdfa, raw, message_id=message_id
+            )
         _store(
             output_dir,
             basename,

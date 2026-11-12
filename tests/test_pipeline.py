@@ -14,6 +14,7 @@ import pytest
 
 from imaparc.config import RunConfig, ToolPaths
 from imaparc.mail.parser import parse_mail
+from imaparc.pdf import provenance
 from imaparc.pdf.validate import run_verapdf
 from imaparc.pipeline import ArchiveIndex, _resolve_output, _store, render_mail
 from imaparc.render.browser import BrowserPool
@@ -302,6 +303,17 @@ async def test_render_mail_end_to_end(tmp_path: Path) -> None:
 
     # Mail-only PDF is PDF/A-3b conformant (no foreign PDF merged in).
     assert run_verapdf(tools.verapdf, result.mail_only_pdf).compliant
+
+    # Both PDFs name their mail by the manifest's hash; only the full PDF also
+    # carries the .eml itself.
+    manifest_hash = (sub / ".imaparc-manifest").read_text().splitlines()[1]
+    for pdf in (result.combined_pdf, result.mail_only_pdf):
+        recorded = provenance.read(pdf.read_bytes())
+        assert recorded is not None
+        assert f"sha256:{recorded.sha256}" == manifest_hash
+        assert recorded.message_id == parsed.headers.message_id
+    assert provenance.embedded_source(result.combined_pdf.read_bytes()) == raw
+    assert provenance.embedded_source(result.mail_only_pdf.read_bytes()) is None
 
 
 @pytest.mark.requires_chromium

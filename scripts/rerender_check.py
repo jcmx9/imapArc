@@ -51,7 +51,6 @@ from pathlib import Path
 
 from imaparc.exceptions import ImapArcError, ParseError
 from imaparc.html.to_text import html_to_text
-from imaparc.humanize import format_date_human
 from imaparc.mail.models import ParsedMail
 from imaparc.mail.parser import parse_mail
 from imaparc.profiles import load_profiles
@@ -139,6 +138,12 @@ def _emls_in(directory: Path) -> list[Path]:
     return [p for p in directory.glob("*.eml") if p.is_file()]
 
 
+# The header date as PDFs without a manifest hash (before 26.8.12) print it.
+# Fixed here rather than taken from imaparc.humanize, whose format has changed
+# since (26.11.3) — only those old PDFs ever reach the content check.
+_LEGACY_DATE = "%d.%m.%Y %H:%M"
+
+
 def _pdf_text(pdf: Path) -> str:
     result = subprocess.run(
         ["pdftotext", "-l", str(_PAGES), str(pdf), "-"],
@@ -158,7 +163,7 @@ def _shown_in(mail: ParsedMail, text: str) -> bool:
     headers = mail.headers
     probes = [
         _norm(headers.from_ or ""),
-        _norm(format_date_human(headers.date)),
+        _norm(headers.date.strftime(_LEGACY_DATE) if headers.date else ""),
         _norm(headers.subject or ""),
     ]
     samples = [

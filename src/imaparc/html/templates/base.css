@@ -30,16 +30,11 @@ body {
   padding: 0;
 }
 
-/* --- Header block prepended to the mail body --- */
+/* --- Filename line above a text attachment (the mail header block itself is
+   inline-styled, see render_html._header_fragment) --- */
 .m2p-header {
-  border-bottom: 0.5pt solid #b4b4b4;
-  padding-bottom: 8px;
+  background: #efefef;
   margin-bottom: 12px;
-  font-size: 10pt;
-}
-
-.m2p-header .row {
-  margin: 0 0 2px 0;
 }
 
 .m2p-header .label {
