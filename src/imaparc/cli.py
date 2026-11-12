@@ -30,6 +30,7 @@ from imaparc.exceptions import (
     SourceError,
     ToolNotFoundError,
 )
+from imaparc.extract import extract as extract_from_pdf
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
 from imaparc.profiles import Profile, load_profiles
@@ -496,6 +497,13 @@ def eml(
         typer.Option("--root", help="Archive root; unmatched mail goes to 00_Mails."),
     ] = DEFAULT_ROOT,
     name: _NameOpt = "mail",
+    no_remote_images: Annotated[
+        bool,
+        typer.Option(
+            "--no-remote-images",
+            help="Do not load remote images (no tracking pixel is fetched).",
+        ),
+    ] = False,
     jobs: _JobsOpt = None,
     log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
@@ -514,9 +522,10 @@ def eml(
     subfolders. Needs no ``.env`` and never touches the fetch state; without a
     profile.yaml every mail goes to 00_Mails.
 
-    Remote images are always loaded here (unlike ``render``, where they are
-    opt-in), so the mail renders as the sender laid it out. Note that this
-    fetches tracking pixels too.
+    Remote images are loaded here by default (unlike ``render``, where they
+    are opt-in), so the mail renders as the sender laid it out. That fetches
+    tracking pixels too — ``--no-remote-images`` turns it off, which is the
+    better choice when filing many mails at once.
     """
     verbosity = _verbosity(silent, verbose, debug)
     setup_logging(verbosity, log_file)
@@ -554,6 +563,7 @@ def eml(
                     root=root.expanduser(),
                     name=name,
                     tools=tools,
+                    allow_remote=not no_remote_images,
                     jobs=jobs if jobs is not None else 4,
                     verbosity=verbosity,
                 )
@@ -674,9 +684,58 @@ def _select_account(accounts: dict[str, Account], name: str | None) -> Account:
 
 
 @app.command()
+def extract(
+    pdfs: Annotated[
+        list[Path],
+        typer.Argument(help="PDFs written by imapArc.", exists=True, dir_okay=False),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Directory to write into."),
+    ] = Path("."),
+    everything: Annotated[
+        bool,
+        typer.Option("--all", help="Also extract the embedded attachments."),
+    ] = False,
+) -> None:
+    """Take the original .eml back out of a PDF.
+
+    Every PDF carries the mail it was rendered from. This writes it into the
+    current directory (or ``--output``), never overwriting a file, and says
+    whether it matches the hash the PDF records. Needs no configuration.
+    """
+    failed = False
+    for pdf in pdfs:
+        result = extract_from_pdf(pdf, output, everything=everything)
+        if result.error:
+            typer.echo(f"Error: {pdf.name}: {result.error}", err=True)
+            failed = True
+            continue
+        for path in result.written:
+            typer.echo(str(path))
+        if result.verified is False:
+            typer.echo(
+                f"Warning: {pdf.name}: the embedded .eml does not match the hash "
+                "the PDF records",
+                err=True,
+            )
+            failed = True
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
 def verify(
     profile_file: _ProfilesOpt = DEFAULT_PROFILES,
     only_profile: _ProfileOpt = None,
+    deep: Annotated[
+        bool,
+        typer.Option(
+            "--deep",
+            help="Also open every PDF and compare every .eml (slow): embedded "
+            "mail intact, PDFs whose .eml is gone, identical .eml copies.",
+        ),
+    ] = False,
     verbose: _VerboseOpt = False,
 ) -> None:
     """Check the archives for damage, duplicates and leftovers.
@@ -686,8 +745,12 @@ def verify(
     they must not make a scheduled check fail.
 
     Findings of the same kind are summarised per profile; ``-v`` lists them
-    individually. An archive can hold hundreds of duplicate folders, and printing
-    one line each drowns the damage report that actually matters.
+    individually. An archive can hold hundreds of duplicates, and printing one
+    line each drowns the damage report that actually matters.
+
+    ``--deep`` additionally reads every file: it checks that the mail embedded
+    in each PDF is the one the PDF records (a mismatch is damage), and reports
+    PDFs whose ``.eml`` is no longer archived and byte-identical ``.eml`` copies.
     """
     try:
         profiles = load_profiles(profile_file)
@@ -696,7 +759,7 @@ def verify(
         raise typer.Exit(1) from exc
     profiles = _select_profiles(profiles, only_profile)
 
-    findings = [f for profile in profiles for f in verify_profile(profile)]
+    findings = [f for p in profiles for f in verify_profile(p, deep=deep)]
     for line in _verify_lines(findings, verbose=verbose):
         console.print(line)
 

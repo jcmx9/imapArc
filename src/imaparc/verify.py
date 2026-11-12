@@ -19,6 +19,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+import pikepdf
+
+from imaparc.pdf import provenance
 from imaparc.pipeline import (
     LEGACY_PDF_DIR,
     STAGING_PREFIX,
@@ -189,12 +192,102 @@ def _unrendered(eml_dir: Path, rendered: _Rendered, profile: str) -> list[Findin
     ]
 
 
-def verify_profile(profile: Profile) -> list[Finding]:
+def _eml_hashes(present: list[Path]) -> dict[str, list[Path]]:
+    """Content hash → the ``.eml`` files holding exactly that content."""
+    found: dict[str, list[Path]] = defaultdict(list)
+    for directory in present:
+        for entry in sorted(directory.glob("*.eml")):
+            try:
+                digest = hashlib.sha256(entry.read_bytes()).hexdigest()
+            except OSError:  # pragma: no cover - unreadable, reported as unrendered
+                continue
+            found[digest].append(entry)
+    return found
+
+
+def _deep_findings(
+    entries: list[tuple[Path, str | None]], present: list[Path], profile: str
+) -> list[Finding]:
+    """The checks that read every file: slow, and worth it now and then.
+
+    - ``embedded-mismatch`` (damage): the ``.eml`` inside a PDF is not the mail
+      the PDF says it shows.
+    - ``no-embedded-eml``: a PDF records its mail but does not carry it.
+    - ``no-eml``: a PDF's mail is not in the eml-Archiv any more — it survives
+      inside the PDF, and ``imaparc extract`` gets it back out.
+    - ``duplicate-eml``: byte-identical ``.eml`` files (mail delivered twice
+      before identical copies were merged).
+    """
+    findings: list[Finding] = []
+    emls = _eml_hashes(present)
+    copies = {digest: paths for digest, paths in emls.items() if len(paths) > 1}
+    if copies:
+        surplus = sum(len(paths) - 1 for paths in copies.values())
+        example = next(iter(copies.values()))
+        findings.append(
+            Finding(
+                "duplicate-eml",
+                Severity.WARN,
+                profile,
+                f"{surplus} .eml are byte-identical copies of {len(copies)} others, "
+                f"e.g. {example[0].name} = {example[1].name}",
+            )
+        )
+    for path, identity in entries:
+        if not path.is_file() or not identity:
+            continue
+        recorded = next(
+            line.removeprefix(_HASH_PREFIX)
+            for line in identity.splitlines()
+            if line.startswith(_HASH_PREFIX)
+        )
+        if recorded not in emls:
+            findings.append(
+                Finding(
+                    "no-eml",
+                    Severity.WARN,
+                    profile,
+                    f"{path.name}: its .eml is not in the eml-Archiv "
+                    "(still embedded in the PDF — imaparc extract)",
+                )
+            )
+        try:
+            source = provenance.embedded_source(path)
+        except (pikepdf.PdfError, OSError) as exc:
+            findings.append(
+                Finding("unreadable", Severity.FAIL, profile, f"{path.name}: {exc}")
+            )
+            continue
+        if source is None:
+            findings.append(
+                Finding(
+                    "no-embedded-eml",
+                    Severity.WARN,
+                    profile,
+                    f"{path.name} does not carry its .eml",
+                )
+            )
+        elif hashlib.sha256(source[1]).hexdigest() != recorded:
+            findings.append(
+                Finding(
+                    "embedded-mismatch",
+                    Severity.FAIL,
+                    profile,
+                    f"{path.name}: the embedded .eml is not the mail it records",
+                )
+            )
+    return findings
+
+
+def verify_profile(profile: Profile, *, deep: bool = False) -> list[Finding]:
     """Check one profile's archive and return everything that does not line up.
 
     A ``pdf: false`` profile is only checked for its ``.eml`` files: it is not
     supposed to have PDFs, so their absence is not a defect. Both ``.eml``
     locations are read — the ``eml-Archiv`` and the legacy ``eml/`` inbox.
+
+    ``deep`` adds the checks that open every PDF and compare every ``.eml``
+    (see :func:`_deep_findings`).
     """
     present = [d for d in eml_dirs(profile) if d.is_dir()]
     if not present:
@@ -214,6 +307,7 @@ def verify_profile(profile: Profile) -> list[Finding]:
         *_duplicates(entries, profile.name),
         *_entry_findings(profile.output, entries, profile.name),
         *(f for d in present for f in _unrendered(d, rendered, profile.name)),
+        *(_deep_findings(entries, present, profile.name) if deep else []),
     ]
 
 

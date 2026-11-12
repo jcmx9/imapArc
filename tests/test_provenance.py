@@ -90,6 +90,23 @@ def test_embedded_file_names_are_sorted_as_stored() -> None:
     assert len(provenance.embedded_files(stamped)) == 4
 
 
+def test_title_and_author_come_from_the_mail() -> None:
+    stamped = provenance.stamp(
+        _pdf(), b"raw", message_id=None, title="Line one\nline\x00 two ", author="A"
+    )
+    with pikepdf.open(io.BytesIO(stamped)) as doc:
+        # One clean line: control characters and line breaks are not carried over.
+        assert str(doc.docinfo["/Title"]) == "Line one line two"
+        assert str(doc.docinfo["/Author"]) == "A"
+
+
+def test_a_mail_without_subject_keeps_the_pdf_untitled() -> None:
+    stamped = provenance.stamp(_pdf(), b"raw", message_id=None, title="", author=None)
+    with pikepdf.open(io.BytesIO(stamped)) as doc:
+        assert "/Title" not in doc.docinfo
+        assert "/Author" not in doc.docinfo
+
+
 def test_stamp_records_hash_and_message_id() -> None:
     raw = build_mail(subject="Hi", text="body")
     stamped = provenance.stamp(_pdf(), raw, message_id="<id@x>")
@@ -115,7 +132,7 @@ def test_stamp_embeds_the_mail_as_the_pdf_source() -> None:
         eml_name="mail.eml",
         mod_date=datetime(2026, 5, 18, 16, 6, tzinfo=timezone(timedelta(hours=2))),
     )
-    assert provenance.embedded_source(stamped) == raw
+    assert provenance.embedded_source(stamped) == ("mail.eml", raw)
     with pikepdf.open(io.BytesIO(stamped)) as pdf:
         spec = pdf.Root.AF[0]
         assert str(spec.UF) == "mail.eml"
@@ -151,8 +168,20 @@ def test_a_stamped_pdfa_stays_pdfa_3b(tmp_path: Path) -> None:
             message_id="<id@x>",
             eml_name="mail.eml",
             mod_date=datetime.now(UTC),
+            attachments=[("report.docx", "application/x-doc", b"PK")],
+            bookmarks=[("E-Mail", 0)],
+            title="Rechnung \u00fcber 3 \u20ac",
+            author="Ada <ada@example.com>",
         )
     )
+    # Ghostscript titles every file "imapArc archive"; ours must replace it in
+    # the info dictionary and the XMP alike, or PDF/A validation fails.
+    with pikepdf.open(out) as doc:
+        assert str(doc.docinfo["/Title"]) == "Rechnung \u00fcber 3 \u20ac"
+        assert str(doc.docinfo["/Author"]) == "Ada <ada@example.com>"
+        xmp = doc.Root.Metadata.read_bytes().decode()
+    assert "imapArc archive" not in xmp
+    assert xmp.count("Rechnung \u00fcber 3 \u20ac") == 1
 
     assert run_verapdf(tools.verapdf, out).compliant
     if shutil.which("pdfdetach"):

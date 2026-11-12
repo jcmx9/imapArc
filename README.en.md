@@ -20,7 +20,7 @@ Guiding principle: **imapArc preserves, it does not alter.** The full raw messag
 - **Real browser rendering** via Chromium — even complex newsletter HTML faithfully, up to three renditions per email (reflowed, plain text, plus a scaled one-page overview for multi-page mail).
 - **No external resource loading** — tracking pixels are stripped before rendering. (Exception: `imaparc eml` loads them on purpose, see there.)
 - **Flat archive:** one PDF per mail directly in `<profile>/`, the `.eml` in `eml-Archiv/<profile>/` — no subfolders. `imaparc eml` files mail from elsewhere the same way, deriving the profile from its headers.
-- **Self-identifying PDFs:** every PDF records the Message-ID and SHA-256 of its `.eml` in its metadata and carries that `.eml` as an embedded source file (PDF/A-3), plus every attachment that cannot be shown as pages (Word, Excel, ZIP …). Bookmarks lead to the mail and to each separator page. Copied out or renamed, a PDF stays complete and traceable to its mail.
+- **Self-identifying PDFs:** every PDF records the Message-ID and SHA-256 of its `.eml` in its metadata and carries that `.eml` as an embedded source file (PDF/A-3), plus every attachment that cannot be shown as pages (Word, Excel, ZIP …). Bookmarks lead to the mail and to each separator page. The PDF's title and author are the mail's subject and sender. Copied out or renamed, a PDF stays complete and traceable to its mail — `imaparc extract` takes the `.eml` back out.
 - **Protective, private archive** — files `0400` (read-only content), directories `0700` (private, yet owner-manageable), **never overwrite** (collision → `…-2`).
 
 ## Prerequisites
@@ -183,6 +183,8 @@ imaparc eml              # file .eml from anywhere into the archive, profile fro
 imaparc install-service  # add the Finder right-click action
 imaparc doctor           # check the install: tools, browser, config, login
 imaparc verify           # check the archive: duplicates, damage, leftovers
+imaparc verify --deep    # also open every PDF and compare every .eml (slow)
+imaparc extract a.pdf    # take the original .eml back out of a PDF
 imaparc restore <path>   # upload archived .eml back onto the IMAP server
 
 imaparc all --profile hetzner    # restrict any mode to one profile
@@ -223,7 +225,7 @@ A directory argument takes only the `.eml` files **directly inside** it, not in 
 
 This command has nothing to do with IMAP: no server contact, no entry in the delivery database. Without a `profile.yaml` everything goes to `00_Mails`.
 
-> **External images are always loaded here** — unlike `imaparc render`, where this must be switched on per profile. A mail picked out by hand should look the way its sender set it, and it was already opened in the mail client anyway. The price: rendering also fetches tracking pixels, so the sender learns the time and IP address of processing.
+> **External images are loaded here by default** — unlike `imaparc render`, where this must be switched on per profile. A mail picked out by hand should look the way its sender set it, and it was already opened in the mail client anyway. The price: rendering also fetches tracking pixels, so the sender learns the time and IP address of processing. `--no-remote-images` prevents that — sensible when filing many old mails at once.
 
 ### Re-rendering an archive with a newer version
 
@@ -269,11 +271,16 @@ bash ~/rerender/render.sh        # after looking through emlinput: rebuilds ever
 | `eml` | `--profiles <path>` | `profile.yaml` whose rules pick the profile (default `~/.config/imaparc/profile.yaml`) |
 | `eml` | `--root <path>` | Archive root; mail no profile matches goes to `00_Mails` (default `~/imapArc`) |
 | `eml` | `--name`, `-n` | Name segment for mail no profile matches (default `mail`) |
+| `eml` | `--no-remote-images` | Do not load remote images (no tracking pixel is fetched) |
 | `eml` | `--jobs`, `-j` | Parallel renders |
 | `install-service` | `--name`, `-n` | Name segment for mail no profile matches, baked into the right-click entry |
 | `doctor` | `--offline` | Skip the IMAP logins (no network access) |
 | `verify` | `--profiles <path>` | `profile.yaml` naming the archives to check |
 | `verify` | `--profile <name>` | Check only this one archive |
+| `verify` | `--deep` | Also open every PDF and compare every `.eml`: embedded mail intact, PDFs without an archived `.eml`, byte-identical `.eml` copies |
+| `extract` | `PDFS...` | PDFs to take the embedded `.eml` out of |
+| `extract` | `--output`, `-o` | Target directory (default: current directory); never overwrites |
+| `extract` | `--all` | Also extract the embedded attachments |
 | `restore` | `[PATHS...]` | Archived `.eml` files or directories |
 | `restore` | `--account <name>` | Account from the `.env` (required if several) |
 | `restore` | `--folder <name>` | Target mailbox, created if missing (default `INBOX`) |

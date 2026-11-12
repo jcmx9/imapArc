@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import zlib
 from pathlib import Path
 
 import pikepdf
@@ -292,6 +293,85 @@ def test_a_name_match_does_not_hide_an_unrendered_mail(tmp_path: Path) -> None:
 
     assert _kinds(findings) == {"unrendered"}
     assert "X" in findings[0].detail and "X-2" not in findings[0].detail
+
+
+# --- --deep: the checks that read every file -------------------------------
+
+
+def _carrying(output: Path, name: str, raw: bytes, embedded: bytes | None) -> None:
+    """A flat PDF recording ``raw`` and carrying ``embedded`` as its .eml."""
+    output.mkdir(parents=True, exist_ok=True)
+    stamped = provenance.stamp(
+        _blank_pdf(),
+        raw,
+        message_id=None,
+        eml_name=None if embedded is None else "m.eml",
+    )
+    if embedded is not None and embedded != raw:
+        # Tamper with the embedded file only; the recorded hash stays raw's.
+        with pikepdf.open(io.BytesIO(stamped)) as doc:
+            doc.Root.AF[0].EF.F.write(
+                zlib.compress(embedded), filter=pikepdf.Name.FlateDecode
+            )
+            out = io.BytesIO()
+            doc.save(out)
+        stamped = out.getvalue()
+    (output / f"{name}.pdf").write_bytes(stamped)
+
+
+def test_deep_is_silent_on_a_sound_archive(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "a", b"RAW")
+    _carrying(output, "a", b"RAW", b"RAW")
+
+    assert verify_profile(_profile(output), deep=True) == []
+
+
+def test_deep_finds_an_embedded_mail_that_is_not_the_recorded_one(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "p"
+    _archived(output, "a", b"RAW")
+    _carrying(output, "a", b"RAW", b"SOMETHING ELSE")
+
+    findings = verify_profile(_profile(output), deep=True)
+
+    assert _kinds(findings) == {"embedded-mismatch"}
+    assert findings[0].severity is Severity.FAIL
+
+
+def test_deep_reports_a_pdf_that_does_not_carry_its_mail(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "a", b"RAW")
+    _carrying(output, "a", b"RAW", None)
+
+    assert _kinds(verify_profile(_profile(output), deep=True)) == {"no-embedded-eml"}
+
+
+def test_deep_reports_a_pdf_whose_eml_is_gone(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "other", b"OTHER")
+    _carrying(output, "other", b"OTHER", b"OTHER")
+    _carrying(output, "a", b"RAW", b"RAW")  # its .eml was deleted
+
+    findings = verify_profile(_profile(output), deep=True)
+
+    assert _kinds(findings) == {"no-eml"}
+    assert "a.pdf" in findings[0].detail and "extract" in findings[0].detail
+
+
+def test_deep_reports_identical_eml_copies_once(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    for name in ("a", "a-2", "a-3"):
+        _archived(output, name, b"RAW")
+    _carrying(output, "a", b"RAW", b"RAW")
+
+    findings = verify_profile(_profile(output), deep=True)
+
+    assert _kinds(findings) == {"duplicate-eml"}
+    assert findings[0].detail.startswith("2 .eml are byte-identical copies of 1")
+    # Not part of the ordinary run: it reads every file.
+    assert verify_profile(_profile(output)) == []
 
 
 # --- report shape ----------------------------------------------------------

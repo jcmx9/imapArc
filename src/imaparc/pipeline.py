@@ -170,6 +170,8 @@ async def render_mail(
             mod_date=timestamp,
             attachments=kept,
             bookmarks=_bookmarks(parts),
+            title=parsed.headers.subject,
+            author=parsed.headers.from_,
         )
         make_dir(output_dir, readonly=True)
         target = write_readonly(target, pdfa)
