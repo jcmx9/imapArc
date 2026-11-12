@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.12] - 2026-11-12
+
 ### Added
 - **`imaparc mailonly`** writes `<name>_mailonly.pdf` — the mail without its
   attachments' pages — by copying the pages before the first attachment
