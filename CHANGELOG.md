@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.13] - 2026-11-12
+
 ### Added
 - **A mail attached to a mail is rendered as pages.** A message forwarded "as
   attachment" (`message/rfc822`, or a `.eml` file) used to get an info page
