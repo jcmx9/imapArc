@@ -106,6 +106,10 @@ def test_render_command_end_to_end(tmp_path: Path) -> None:
     assert len(folders) == 2
     assert all("_acme_" in p.name for p in folders)
     assert all((f / f"{f.name}.pdf").exists() for f in folders)
+    # Rendered mail leaves the eml/ inbox for the eml-Archiv, names unchanged.
+    assert list((output / "eml").iterdir()) == []
+    archived = sorted(p.name for p in (tmp_path / "eml-Archiv" / "vault").iterdir())
+    assert archived == ["2026-03-23_00-00-00_p_m0.eml", "2026-03-23_00-00-01_p_m1.eml"]
 
     # Second run is idempotent: nothing new written.
     again = runner.invoke(app, ["render", "--profiles", str(profiles)])

@@ -193,6 +193,31 @@ def test_a_genuinely_unrendered_mail_is_still_reported(tmp_path: Path) -> None:
     assert "Never" in next(f for f in findings if f.kind == "unrendered").detail
 
 
+def _archived_eml(tmp_path: Path, name: str, raw: bytes) -> None:
+    archive = tmp_path.parent / "eml-Archiv" / tmp_path.name
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / f"{name}.eml").write_bytes(raw)
+
+
+def test_an_archived_rendered_mail_is_clean(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived_eml(output, "2026-08-01_10-00-00_p_Mail", b"Message-ID: <a@b>\r\n\r\nb")
+    _rendered(output, "2026-08-01_10-00-00_p_Mail", "<a@b>")
+
+    assert verify_profile(_profile(output)) == []
+
+
+def test_an_archived_mail_without_a_folder_is_unrendered(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived_eml(output, "2026-08-01_10-00-00_p_Lost", b"Message-ID: <x@y>\r\n\r\nb")
+    _rendered(output, "2026-08-01_11-00-00_p_Other", "<other@x>")
+
+    findings = verify_profile(_profile(output))
+
+    assert "unrendered" in _kinds(findings)
+    assert "no-archive" not in _kinds(findings)
+
+
 # --- report shape ----------------------------------------------------------
 
 

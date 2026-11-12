@@ -49,35 +49,66 @@ def test_non_eml_argument_exits_with_an_error(tmp_path: Path) -> None:
     assert "Traceback" not in result.output
 
 
+def _isolated(tmp_path: Path) -> list[str]:
+    """Never the user's real profile.yaml or ~/imapArc."""
+    return ["--profiles", str(tmp_path / "none.yaml"), "--root", str(tmp_path / "arc")]
+
+
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-def test_renders_and_moves_the_eml(tmp_path: Path) -> None:
+def test_renders_into_the_archive_and_archives_the_eml(tmp_path: Path) -> None:
     mail = tmp_path / "Rechnung.eml"
     mail.write_bytes(build_mail(subject="Rechnung Juli"))
 
-    result = runner.invoke(app, ["eml", str(mail)])
+    result = runner.invoke(app, ["eml", *_isolated(tmp_path), str(mail)])
 
-    assert result.exit_code == 0
-    folders = [p for p in tmp_path.iterdir() if p.is_dir()]
-    assert len(folders) == 1
-    folder = folders[0]
+    assert result.exit_code == 0, result.output
+    [folder] = (tmp_path / "arc" / "00_Mails" / "pdf").iterdir()
     assert (folder / f"{folder.name}.pdf").is_file()
-    assert (folder / f"{folder.name}.eml").is_file()
+    archive = tmp_path / "arc" / "eml-Archiv" / "00_Mails"
+    assert (archive / f"{folder.name}.eml").is_file()
     assert not mail.exists()
 
 
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-def test_name_option_is_used_in_the_basename(tmp_path: Path) -> None:
-    (tmp_path / "a.eml").write_bytes(build_mail(subject="Rechnung"))
+def test_profiles_from_the_given_file_pick_the_target(tmp_path: Path) -> None:
+    profiles = tmp_path / "profile.yaml"
+    profiles.write_text(
+        "profiles:\n"
+        "  - name: Amt\n"
+        "    account: x\n"
+        f"    output: {tmp_path / 'arc' / 'Amt'}\n"
+        "    match:\n"
+        "      addresses: [amt@stadt.de]\n",
+        encoding="utf-8",
+    )
+    mail = tmp_path / "a.eml"
+    mail.write_bytes(build_mail(from_="amt@stadt.de", subject="Termin"))
 
-    result = runner.invoke(app, ["eml", "--name", "hetzner", str(tmp_path)])
+    root = str(tmp_path / "arc")
+    result = runner.invoke(
+        app, ["eml", "--profiles", str(profiles), "--root", root, str(mail)]
+    )
 
-    assert result.exit_code == 0
-    folders = [p for p in tmp_path.iterdir() if p.is_dir()]
-    assert "_hetzner_" in folders[0].name
+    assert result.exit_code == 0, result.output
+    [folder] = (tmp_path / "arc" / "Amt" / "pdf").iterdir()
+    assert "_Amt_" in folder.name
+
+
+def test_broken_profiles_file_exits_with_an_error(tmp_path: Path) -> None:
+    profiles = tmp_path / "profile.yaml"
+    profiles.write_text("profiles: [ {name: x", encoding="utf-8")
+    (tmp_path / "a.eml").write_bytes(build_mail())
+
+    result = runner.invoke(
+        app, ["eml", "--profiles", str(profiles), str(tmp_path / "a.eml")]
+    )
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
 
 
 @pytest.mark.requires_tools  # ToolPaths.resolve() runs before the browser starts
@@ -89,7 +120,7 @@ def test_missing_chromium_exits_with_an_error_not_a_traceback(
     (mails / "a.eml").write_bytes(build_mail())
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-browsers"))
 
-    result = runner.invoke(app, ["eml", str(mails)])
+    result = runner.invoke(app, ["eml", *_isolated(tmp_path), str(mails)])
 
     assert result.exit_code == 1
     assert "Error:" in result.output

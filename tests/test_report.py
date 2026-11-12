@@ -83,22 +83,6 @@ def test_non_compliant_truncates_after_ten() -> None:
     assert "… and 2 more" in summary
 
 
-def test_non_compliant_mailonly_is_flagged_as_anomaly() -> None:
-    """A mail-only rendition is imapArc's own output — non-compliance is a bug."""
-    report = RunReport()
-    report.non_compliant.append("/archive/pdf/a/a_mailonly.pdf")
-
-    assert "anomaly" in report.summary()
-
-
-def test_non_compliant_combined_only_is_not_an_anomaly() -> None:
-    """A combined PDF may carry an attachment that resists conversion."""
-    report = RunReport()
-    report.non_compliant.append("/archive/pdf/a/a.pdf")
-
-    assert "anomaly" not in report.summary()
-
-
 # --- PDF/A validation ------------------------------------------------------
 
 
@@ -110,16 +94,15 @@ def _quiet_progress() -> Progress:
     return Progress(disable=True)
 
 
-def test_validate_deduplicates_the_two_pdf_paths(
+def test_validate_deduplicates_pdf_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A mail without attachments points both fields at the same file."""
+    """A PDF reported twice is validated once."""
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     report = RunReport()
-    report.add(
-        RenderResult(basename="a", written=True, combined_pdf=pdf, mail_only_pdf=pdf)
-    )
+    for _ in range(2):
+        report.add(RenderResult(basename="a", written=True, combined_pdf=pdf))
     validated: list[list[Path]] = []
 
     def _batch(_verapdf: Path, paths: list[Path]) -> list[ValidationResult]:
@@ -138,13 +121,12 @@ def test_validate_records_non_compliant_pdfs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     good = tmp_path / "good.pdf"
-    bad = tmp_path / "bad_mailonly.pdf"
+    bad = tmp_path / "bad.pdf"
     for path in (good, bad):
         path.write_bytes(b"%PDF-1.4")
     report = RunReport()
-    report.add(
-        RenderResult(basename="a", written=True, combined_pdf=good, mail_only_pdf=bad)
-    )
+    report.add(RenderResult(basename="a", written=True, combined_pdf=good))
+    report.add(RenderResult(basename="b", written=True, combined_pdf=bad))
 
     def _batch(_verapdf: Path, paths: list[Path]) -> list[ValidationResult]:
         return [ValidationResult(compliant=p.name == "good.pdf") for p in paths]

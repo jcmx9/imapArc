@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from imaparc.pipeline import MANIFEST, STAGING_PREFIX, read_identity
-from imaparc.profiles import Profile
+from imaparc.profiles import Profile, eml_dirs
 
 _HASH_PREFIX = "sha256:"
 _MESSAGE_ID = re.compile(rb"^Message-ID:\s*(.+?)\s*$", re.I | re.M)
@@ -179,30 +179,33 @@ def _unrendered(eml_dir: Path, pdf_dir: Path, profile: str) -> list[Finding]:
 def verify_profile(profile: Profile) -> list[Finding]:
     """Check one profile's archive and return everything that does not line up.
 
-    A ``pdf: false`` profile is only checked for its ``eml/``: it is not supposed
-    to have rendered folders, so their absence is not a defect.
+    A ``pdf: false`` profile is only checked for its ``.eml`` files: it is not
+    supposed to have rendered folders, so their absence is not a defect. Both
+    ``.eml`` locations are checked — the ``eml/`` inbox and the ``eml-Archiv``
+    that rendered mail moves on to.
     """
-    eml_dir = profile.output / "eml"
     pdf_dir = profile.output / "pdf"
-    if not eml_dir.is_dir():
+    present = [d for d in eml_dirs(profile) if d.is_dir()]
+    if not present:
         return [
             Finding(
                 "no-archive",
                 Severity.WARN,
                 profile.name,
-                f"no eml/ at {eml_dir} — nothing fetched yet?",
+                f"no eml/ at {profile.output / 'eml'} — nothing fetched yet?",
             )
         ]
     if not profile.pdf:
         return []
+    unrendered = [f for d in present for f in _unrendered(d, pdf_dir, profile.name)]
     if not pdf_dir.is_dir():
         # Fetched but never rendered — every mail is simply unrendered.
-        return _unrendered(eml_dir, pdf_dir, profile.name)
+        return unrendered
 
     return [
         *_duplicates(pdf_dir, profile.name),
         *_folder_findings(pdf_dir, profile.name),
-        *_unrendered(eml_dir, pdf_dir, profile.name),
+        *unrendered,
     ]
 
 

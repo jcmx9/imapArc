@@ -84,9 +84,10 @@ profiles:
     pdf: true                        # Optional, default false. When true, also
                                      #   render each message into its own folder
                                      #   <basename>/: <basename>.pdf (mail +
-                                     #   attachment pages) and, when attachments
-                                     #   exist, <basename>_mailonly.pdf plus the
-                                     #   original attachment files.
+                                     #   attachment pages, .eml embedded) plus the
+                                     #   original attachment files. The rendered
+                                     #   .eml then moves from eml/ to
+                                     #   eml-Archiv/<output name>/ beside output.
 
     remote_images: false             # Optional, default false. Load external
                                      #   images when rendering (privacy/security

@@ -64,6 +64,8 @@ def _state_path() -> Path:
 DEFAULT_ENV = _config_dir() / ".env"
 DEFAULT_PROFILES = _config_dir() / "profile.yaml"
 DEFAULT_STATE = _state_path()
+# Where file mode files mail that no profile claims (``<root>/00_Mails``).
+DEFAULT_ROOT = Path.home() / "imapArc"
 
 app = typer.Typer(
     name="imaparc",
@@ -100,7 +102,7 @@ _NameOpt = Annotated[
     typer.Option(
         "--name",
         "-n",
-        help="Name segment in the generated file names (the profile's slot).",
+        help="Profile name for mail no profile matches (its file-name segment).",
     ),
 ]
 _DryRunOpt = Annotated[
@@ -481,6 +483,11 @@ def eml(
             help="Files or directories to render. Default: current directory.",
         ),
     ] = None,
+    profile_file: _ProfilesOpt = DEFAULT_PROFILES,
+    root: Annotated[
+        Path,
+        typer.Option("--root", help="Archive root; unmatched mail goes to 00_Mails."),
+    ] = DEFAULT_ROOT,
     name: _NameOpt = "mail",
     jobs: _JobsOpt = None,
     log_file: _LogFileOpt = None,
@@ -488,19 +495,21 @@ def eml(
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
 ) -> None:
-    """Render loose .eml files where they lie, without a profile.
+    """Render .eml files from anywhere into the archive.
 
-    For a mail dragged out of a mail client: each ``.eml`` becomes a
-    ``<basename>/`` folder next to it, holding the PDFs and the attachments —
-    and the ``.eml`` itself is moved in afterwards.
+    Each mail's profile is derived from its headers with the rules in
+    profile.yaml (IMAP folder rules are ignored); a mail matching several
+    profiles is filed into each, one matching none into <root>/00_Mails. The
+    PDF goes to <profile>/pdf/<basename>/, and once it exists the .eml moves to
+    eml-Archiv/<profile>/ beside the profile directories.
 
     A directory argument takes the ``.eml`` files directly inside it, not in
-    subfolders. Needs no ``.env`` and no profile.yaml, and never touches the
-    fetch state.
+    subfolders. Needs no ``.env`` and never touches the fetch state; without a
+    profile.yaml every mail goes to 00_Mails.
 
-    Remote images are always loaded here (unlike the profile-driven commands,
-    where they are opt-in), so the mail renders as the sender laid it out. Note
-    that this fetches tracking pixels too.
+    Remote images are always loaded here (unlike ``render``, where they are
+    opt-in), so the mail renders as the sender laid it out. Note that this
+    fetches tracking pixels too.
     """
     verbosity = _verbosity(silent, verbose, debug)
     setup_logging(verbosity, log_file)
@@ -519,9 +528,17 @@ def eml(
         raise typer.Exit(1) from exc
 
     try:
+        profiles = load_profiles(profile_file) if profile_file.exists() else []
+    except ConfigError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    try:
         report = asyncio.run(
             run_adhoc(
                 files,
+                profiles=profiles,
+                root=root.expanduser(),
                 name=name,
                 tools=tools,
                 jobs=jobs if jobs is not None else 4,

@@ -1,20 +1,22 @@
-"""Ad-hoc rendering of loose ``.eml`` files, without a profile.
+"""File mode: render ``.eml`` files from anywhere into the profile archive.
 
-This is the ``eml`` command's engine. It renders mail where it already lies on
-disk — typically a message dragged out of a mail client — and afterwards moves
-the ``.eml`` into the folder that was rendered for it.
+This is the ``eml`` command's engine. A mail — dragged out of a mail client, or
+lying anywhere on disk — is filed exactly as ``fetch`` + ``render`` would file
+it: its profile is derived from its **headers** with the rules in
+``profile.yaml``, the PDF goes to ``<profile output>/pdf/<basename>/``, and once
+that folder exists the ``.eml`` moves into ``eml-Archiv/<output name>/``. A mail
+matching several profiles is filed into each of them; one matching none goes to
+``<root>/00_Mails/``.
 
-Deliberately isolated from the archive path: no IMAP connection, no ``.env``, no
-state store. Nothing here can affect what a later ``fetch`` considers delivered.
+Still isolated from the IMAP side: no connection, no ``.env``, no state store.
+Nothing here can affect what a later ``fetch`` considers delivered.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import shutil
-from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,22 +25,24 @@ from imaparc.console import make_progress
 from imaparc.exceptions import ImapArcError, SourceError
 from imaparc.mail.parser import parse_mail
 from imaparc.pipeline import ArchiveIndex, RenderResult, render_mail, sweep_staging
+from imaparc.profiles import Profile, archived_eml_dir, matching_profiles
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
-from imaparc.storage import FILE_MODE, disambiguate
+from imaparc.sources.deliver import file_away
+from imaparc.storage import make_dir
 
 logger = logging.getLogger(__name__)
 
 _SUFFIX = ".eml"
+FALLBACK_DIR = "00_Mails"
 
 
 def collect_eml(paths: list[Path]) -> list[Path]:
     """Resolve command arguments to the ``.eml`` files to render.
 
     A file argument contributes itself; a directory contributes the ``.eml``
-    files directly inside it, sorted by name. The scan is **not** recursive: a
-    rendered mail's ``.eml`` ends up one level down in its own folder, and a
-    recursive scan would collect it again on the next run.
+    files directly inside it, sorted by name. The scan is **not** recursive, so
+    a directory never pulls in mail attached to another mail inside a folder.
 
     Argument order is kept, and a file reached twice (named directly and via its
     directory) appears once.
@@ -76,36 +80,6 @@ def collect_eml(paths: list[Path]) -> list[Path]:
     return found
 
 
-def move_into_folder(eml: Path, folder: Path) -> Path | None:
-    """Move a rendered mail's ``.eml`` into its output folder.
-
-    Runs *after* the folder was moved into place by a single atomic rename, so
-    the "folder present means fully rendered" guarantee still holds for the PDFs.
-    The move is the one thing that happens afterwards, and it is idempotent: a
-    source file that is already gone means a previous run did it, and a run
-    interrupted between rendering and moving is repaired by simply running again.
-
-    The file is renamed to the folder's own name, matching how the archive names
-    a mail's ``.eml``. An attachment that happens to occupy that name is not
-    overwritten — the ``.eml`` is disambiguated instead.
-
-    Args:
-        eml: The source ``.eml``.
-        folder: The mail's output folder (``0700``, so no unlocking is needed).
-
-    Returns:
-        The path written, or ``None`` if there was nothing left to move.
-    """
-    if not eml.exists():
-        return None
-    target = disambiguate(folder / f"{folder.name}{_SUFFIX}")
-    # shutil, not os.rename: a mail dragged out of a client lands in a temp
-    # directory that may be on a different filesystem than the target.
-    shutil.move(str(eml), str(target))
-    os.chmod(target, FILE_MODE)
-    return target
-
-
 def _received(eml: Path) -> datetime | None:
     """Timestamp fallback when the mail carries no usable ``Date`` header."""
     try:
@@ -114,35 +88,50 @@ def _received(eml: Path) -> datetime | None:
         return None
 
 
+def fallback_profile(root: Path, name: str) -> Profile:
+    """Where a mail goes that no profile claims: ``<root>/00_Mails``."""
+    return Profile(name=name, account="-", output=root / FALLBACK_DIR, pdf=True)
+
+
+@dataclass
+class _Target:
+    """Per-profile render state, shared by every mail filed into that profile."""
+
+    profile: Profile
+    config: RunConfig
+    output: Path
+    existing: ArchiveIndex
+    claimed: dict[str, str] = field(default_factory=dict)
+
+
 async def run_adhoc(
     files: list[Path],
     *,
+    profiles: list[Profile],
+    root: Path,
     name: str,
     tools: ToolPaths,
     jobs: int = 4,
     gs_jobs: int = 2,
     verbosity: int = 1,
 ) -> RunReport:
-    """Render loose ``.eml`` files in place, then move each into its folder.
+    """Render ``.eml`` files into the profile archive and archive each one.
 
-    Each mail is rendered into ``<basename>/`` **next to its own ``.eml``**, so
-    arguments from several directories each stay where they came from.
+    The ``.eml`` is only moved once the PDF folder exists for **every** profile
+    it was filed into (rendered now, or recognised as rendered by its manifest);
+    a mail that failed anywhere stays where it was, so a rerun picks it up.
 
-    Unlike the archive path, the containing directory is left exactly as it is:
-    it belongs to the user (a Desktop, a downloads folder), not to imapArc, so
-    its permissions are never touched. Only the per-mail folder that imapArc
-    creates gets archive permissions.
-
-    **Remote images are always loaded here**, unlike the archive path where they
-    are opt-in. This command renders a mail the user picked out by hand and
-    already opened in a client, so the faithful rendition is what is wanted and
-    any tracking pixel has long since fired. The trade-off is real and one-way:
-    rendering fetches those URLs, so the sender learns when and from where the
-    mail was processed.
+    **Remote images are always loaded here**, unlike ``render`` where they are
+    opt-in per profile. This command renders a mail the user picked out by hand
+    and typically already opened in a client, so the faithful rendition is what
+    is wanted and any tracking pixel has long since fired. The trade-off is real
+    and one-way: rendering fetches those URLs.
 
     Args:
         files: The ``.eml`` files to render, as returned by :func:`collect_eml`.
-        name: Fills the profile slot of the base name.
+        profiles: The configured profiles; their header rules pick the target.
+        root: Archive root; unmatched mail goes to ``<root>/00_Mails``.
+        name: Profile name used for unmatched mail (the middle of its name).
         tools: Resolved gs/qpdf/verapdf paths.
         jobs: Mails rendered concurrently.
         gs_jobs: Ghostscript conversions at once. Deliberately lower than
@@ -156,80 +145,104 @@ async def run_adhoc(
     if not files:
         return report
 
-    by_directory: dict[Path, list[Path]] = defaultdict(list)
-    for eml in files:
-        by_directory[eml.parent].append(eml)
-    for directory in by_directory:
-        sweep_staging(directory)
+    fallback = fallback_profile(root, name)
+    targets: dict[Path, _Target] = {}
 
-    config = RunConfig(
-        tools=tools,
-        verbosity=verbosity,
-        jobs=jobs,
-        gs_jobs=gs_jobs,
-        allow_remote=True,
-    )
-    semaphore = asyncio.Semaphore(config.jobs)
+    def target(profile: Profile) -> _Target:
+        # Created on first use, synchronously (no await), so concurrent mails
+        # filed into the same profile share one reservation map and index.
+        output = profile.output / "pdf"
+        if output not in targets:
+            make_dir(output, readonly=True)
+            sweep_staging(output)
+            targets[output] = _Target(
+                profile=profile,
+                config=RunConfig(
+                    tools=tools,
+                    verbosity=verbosity,
+                    jobs=jobs,
+                    gs_jobs=gs_jobs,
+                    allow_remote=True,
+                    filename_pattern=profile.filename_pattern,
+                    date_format=profile.date_format,
+                    max_attachment_bytes=profile.max_attachment_bytes,
+                    attachment_timeout_s=profile.attachment_timeout_s,
+                    render_timeout_ms=profile.render_timeout_ms,
+                ),
+                output=output,
+                existing=ArchiveIndex.scan(output),
+            )
+        return targets[output]
+
+    semaphore = asyncio.Semaphore(jobs)
     # Separate from `semaphore`: Ghostscript holds a whole document in memory,
     # so it needs a tighter bound than the number of mails rendered at once.
-    gs_semaphore = asyncio.Semaphore(config.gs_jobs)
+    gs_semaphore = asyncio.Semaphore(gs_jobs)
 
     with make_progress(disable=verbosity == 0) as progress:
         task = progress.add_task("Rendering mail", total=len(files))
         async with BrowserPool(
-            allow_remote=config.allow_remote, timeout_ms=config.render_timeout_ms
+            allow_remote=True, timeout_ms=fallback.render_timeout_ms
         ) as pool:
-            # One reservation set per directory: base names only have to be
-            # unique within the folder they are written to.
-            claimed: dict[Path, dict[str, str]] = {d: {} for d in by_directory}
-            existing = {d: ArchiveIndex.scan(d) for d in by_directory}
 
-            async def process(eml: Path) -> RenderResult | None:
+            async def process(eml: Path) -> list[RenderResult]:
+                done: list[tuple[_Target, RenderResult]] = []
                 async with semaphore:
                     try:
                         raw = eml.read_bytes()
-                        result = await render_mail(
-                            parse_mail(raw),
-                            raw=raw,
-                            profile=name,
-                            output_dir=eml.parent,
-                            pool=pool,
-                            config=config,
-                            received=_received(eml),
-                            claimed=claimed[eml.parent],
-                            existing=existing[eml.parent],
-                            gs_semaphore=gs_semaphore,
-                        )
+                        parsed = parse_mail(raw)
+                        chosen = matching_profiles(
+                            profiles,
+                            parsed.headers,
+                            [a.filename for a in parsed.attachments],
+                        ) or [fallback]
+                        for profile in chosen:
+                            t = target(profile)
+                            result = await render_mail(
+                                parsed,
+                                raw=raw,
+                                profile=profile.name,
+                                output_dir=t.output,
+                                pool=pool,
+                                config=t.config,
+                                received=_received(eml),
+                                claimed=t.claimed,
+                                existing=t.existing,
+                                gs_semaphore=gs_semaphore,
+                            )
+                            done.append((t, result))
+                            # One line per mail at -v; the detail goes to -vv.
+                            if result.skipped:
+                                logger.debug("∘ %s (already rendered)", result.basename)
+                            else:
+                                logger.info("%s → %s", profile.name, eml.name)
+                                logger.debug("  %s", result.basename)
+                        # After every folder's atomic rename, never before: the
+                        # mail is only archived once all its PDFs are complete.
+                        if all((t.output / r.basename).is_dir() for t, r in done):
+                            archived = file_away(
+                                eml,
+                                raw,
+                                [
+                                    (archived_eml_dir(t.profile.output), r.basename)
+                                    for t, r in done
+                                ],
+                            )
+                            logger.debug("archived %s → %s", eml.name, archived)
                     except (ImapArcError, OSError) as exc:
                         # One unreadable mail must not abort the whole run.
                         logger.error("Failed to render %s: %s", eml, exc)
-                        return None
-                    else:
-                        # One line per mail at -v so a long run can be watched;
-                        # the locating detail goes to -vv.
-                        if result.skipped:
-                            logger.debug("∘ %s (already rendered)", result.basename)
-                        else:
-                            logger.info("→ %s", eml.name)
-                            logger.debug("  %s", result.basename)
                     finally:
                         progress.advance(task)
-                    # After the folder's atomic rename, never before: the mail is
-                    # only archived once its PDFs are complete. Idempotent, so an
-                    # interrupted run is repaired by simply running again.
-                    folder = eml.parent / result.basename
-                    if folder.is_dir():
-                        moved = move_into_folder(eml, folder)
-                        if moved is not None:
-                            logger.debug("moved %s → %s", eml.name, moved)
-                    return result
+                return [r for _, r in done]
 
             results = await asyncio.gather(
                 *(process(eml) for eml in files), return_exceptions=True
             )
         for outcome in results:
-            if isinstance(outcome, RenderResult):
-                report.add(outcome)
+            if isinstance(outcome, list):
+                for result in outcome:
+                    report.add(result)
             elif isinstance(outcome, BaseException):
                 logger.error("Unexpected error while rendering a mail: %s", outcome)
         validate_pdfa(report, tools, progress)

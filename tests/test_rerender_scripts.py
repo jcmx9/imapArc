@@ -234,7 +234,7 @@ def test_discover_finds_both_kinds_and_honours_excludes(
     hidden = tmp_path / ".cache" / "x"
     _folder(hidden, "Y", "<y@x>", _pdf([]))
 
-    found = check.discover(tmp_path, [tmp_path / "alt"], tmp_path / "none.yaml")
+    found, _ = check.discover(tmp_path, [tmp_path / "alt"], tmp_path / "none.yaml")
 
     assert {(a.kind, a.path, a.name) for a in found} == {
         ("profile", archive["root"] / "P", "P"),
@@ -242,14 +242,18 @@ def test_discover_finds_both_kinds_and_honours_excludes(
     }
 
 
-def test_profiles_yaml_covers_only_unconfigured_archives(
-    archive: dict[str, Path], tmp_path: Path
+def test_discover_lists_loose_eml_but_not_inboxes_folders_or_archives(
+    archive: dict[str, Path], loose: dict[str, Path], tmp_path: Path
 ) -> None:
-    from imaparc.profiles import load_profiles
-
-    other = tmp_path / "Trennung" / "Mails"
-    (other / "eml").mkdir(parents=True)
-    _folder(other / "pdf", "2026-03-23_02-18-04_RA-X_Betreff", "<z@x>", _pdf([]))
+    stray = tmp_path / "Downloads" / "export"
+    stray.mkdir(parents=True)
+    (stray / "a.eml").write_bytes(b"x")
+    filed = tmp_path / "archive" / "eml-Archiv" / "P"
+    filed.mkdir(parents=True)
+    (filed / "done.eml").write_bytes(b"x")
+    set_aside = tmp_path / "archive" / "pdf-Löscharchiv" / "x"
+    _folder(set_aside, "Z", "<z@x>", _pdf([]))
+    (set_aside / "z.eml").write_bytes(b"x")
     config = tmp_path / "profile.yaml"
     config.write_text(
         "profiles:\n"
@@ -258,12 +262,30 @@ def test_profiles_yaml_covers_only_unconfigured_archives(
         encoding="utf-8",
     )
 
-    found = check.discover(tmp_path, [], config)
-    yaml_file = tmp_path / "generated.yaml"
-    yaml_file.write_text(check._profiles_yaml(found), encoding="utf-8")
-    profiles = load_profiles(yaml_file)
+    found, loose_emls = check.discover(tmp_path, [], config)
 
-    assert [(p.name, p.output) for p in profiles] == [("RA-X", other)]
+    # P's inbox belongs to `imaparc render`; the mail folders' own .eml, the
+    # eml-Archiv and the pdf-Löscharchiv are never loose.
+    assert loose_emls == [stray / "a.eml"]
+    assert all("pdf-Löscharchiv" not in str(a.path) for a in found)
+
+
+def test_unconfigured_inbox_is_loose(archive: dict[str, Path], tmp_path: Path) -> None:
+    _, loose_emls = check.discover(tmp_path, [], tmp_path / "none.yaml")
+    assert sorted(loose_emls) == sorted(archive["eml"].glob("*.eml"))
+
+
+def test_a_folder_is_proven_by_the_eml_archive(
+    archive: dict[str, Path], tmp_path: Path
+) -> None:
+    """Once rendered, the .eml lives in eml-Archiv/<profile>/ — still proof."""
+    filed = archive["root"] / "eml-Archiv" / "P"
+    filed.mkdir(parents=True)
+    (archive["eml"] / "H-2.eml").rename(filed / "H-2.eml")
+
+    mails = check._Mails.load(check._profile_emls(archive["root"] / "P"))
+
+    assert check.verdict(archive["hash"], mails) == ("hash", filed / "H-2.eml")
 
 
 # --- the shell wrappers, end to end ---------------------------------------
@@ -356,12 +378,11 @@ def test_apply_writes_the_render_commands(loose: dict[str, Path], home: Path) ->
 
     assert result.returncode == 0, result.stderr
     script = (out / "render.sh").read_text()
-    # Not covered by --config, so rendered through the generated profiles.
-    assert f"imaparc render --profiles {out / 'profiles.yaml'}" in script
+    assert "\nimaparc render\n" in script
     # Exactly the extracted file, never the whole directory.
-    assert "eml_if_present mail " in script
-    assert f"{loose['folder'].name}.eml" in script
+    assert f"add {loose['dir'] / loose['folder'].name}.eml\n" in script
     assert f"{loose['dir']}\n" not in script
+    assert "xargs -0 imaparc eml" in script
 
 
 def test_render_script_can_run_twice(loose: dict[str, Path], home: Path) -> None:
@@ -387,7 +408,9 @@ def test_render_script_can_run_twice(loose: dict[str, Path], home: Path) -> None
         (loose["dir"] / f"{loose['folder'].name}.eml").unlink(missing_ok=True)
 
     calls = (stub / "imaparc.log").read_text().splitlines()
-    assert sum(c.startswith("eml ") for c in calls) == 1
+    extracted = f"{loose['folder'].name}.eml"
+    assert sum(extracted in c for c in calls) == 1
+    assert calls.count("render") == 2
 
 
 def test_apply_deletes_listed_folders(archive: dict[str, Path], home: Path) -> None:
@@ -439,7 +462,7 @@ def test_apply_refuses_a_move_target_inside_an_archive(
         _APPLY,
         out / "rerender.txt",
         "--move-to",
-        archive["root"] / "old",
+        archive["root"] / "P" / "old",
         "--yes",
         home=home,
     )
@@ -447,7 +470,23 @@ def test_apply_refuses_a_move_target_inside_an_archive(
     assert result.returncode == 1
     assert "inside the archive" in result.stderr
     assert archive["hash"].exists()
-    assert not (archive["root"] / "old").exists()  # nothing created either
+    assert not (archive["root"] / "P" / "old").exists()  # nothing created either
+
+
+def test_apply_may_set_aside_into_the_archive_root(
+    archive: dict[str, Path], home: Path
+) -> None:
+    """~/imapArc/pdf-Löscharchiv sits beside the profiles and is never listed."""
+    out = home / "out"
+    _list(home, out)
+    target = archive["root"] / "pdf-Löscharchiv"
+
+    result = _run(_APPLY, out / "rerender.txt", "--move-to", target, "--yes", home=home)
+
+    assert result.returncode == 0, result.stderr
+    assert (target / "archive" / "P" / "pdf" / "H-3" / "H-3.pdf").is_file()
+    # A second listing does not offer the set-aside folders again.
+    assert all("pdf-Löscharchiv" not in line for line in _list(home, home / "out2"))
 
 
 def test_apply_without_confirmation_touches_nothing(

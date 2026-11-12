@@ -9,8 +9,9 @@ set -euo pipefail
 #
 # LIST is the rerender.txt written by rerender-list.sh. --move-to puts each
 # folder under DIR at its path relative to $HOME (reversible; DIR must not lie
-# inside an archive); --delete removes it. Without --yes the count is shown and
-# "yes" must be typed.
+# inside a profile or mail directory — ~/imapArc/pdf-Löscharchiv beside the
+# profiles is fine, the list step never looks there); --delete removes it.
+# Without --yes the count is shown and "yes" must be typed.
 #
 # The list is checked again before anything is touched — it may be stale, or
 # edited by hand. Only folders whose mail still provably exists as .eml are
@@ -18,11 +19,11 @@ set -euo pipefail
 # A folder written by `imaparc eml` holds its own .eml: that file is first moved
 # out beside the folder, so it survives and can be rendered again.
 #
-# Afterwards run the render.sh written next to LIST: it holds exactly the
-# imaparc calls that rebuild what was removed.
+# Afterwards run the render.sh written next to LIST: it renders every .eml
+# found and files it into the archive (eml-Archiv) once its PDF exists.
 
 usage() {
-    grep '^#' "$0" | sed -n '3,22p' | cut -c3-
+    grep '^#' "$0" | sed -n '3,21p' | cut -c3-
     exit 2
 }
 
@@ -39,12 +40,12 @@ resolve_path() {
     printf '%s%s\n' "$(cd "${path}" && pwd -P)" "${rest}"
 }
 
-# The directory an entry's archive occupies: ARCHIVE for ARCHIVE/<profile>/pdf/
-# <mail>, and the directory holding the folder for an `imaparc eml` folder.
+# The directory an entry's archive occupies: <profile> for <profile>/pdf/<mail>,
+# and the directory holding the folder for an `imaparc eml` folder.
 archive_of() {
     local kind="$1" folder="$2"
     if [[ "${kind}" == "profile" ]]; then
-        (cd "${folder}/../../.." && pwd -P)
+        (cd "${folder}/../.." && pwd -P)
     else
         (cd "${folder}/.." && pwd -P)
     fi

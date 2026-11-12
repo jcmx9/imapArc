@@ -1,4 +1,4 @@
-"""Render one parsed mail into the fixed PDF double-structure.
+"""Render one parsed mail into its archive folder.
 
 This is where every render building block comes together: Chromium renders the
 three body renditions and each separator/info page, ``convert_attachment`` turns
@@ -6,12 +6,10 @@ attachments into pages (or reports why not), the parts are merged and passed
 through Ghostscript to PDF/A-3b, and the result is written to the immutable
 archive.
 
-Every mail is stored under its own ``<basename>/`` folder. ``<basename>.pdf`` is
-the full PDF the reader opens: body + attachment pages when the mail has
-attachments, otherwise just the body. A mail **with** attachments additionally
-gets ``<basename>_mailonly.pdf`` (the body without attachment pages) and the
-original attachment files alongside. So a mail's PDF is never duplicated across
-two locations.
+Every mail is stored under its own ``<basename>/`` folder holding one PDF,
+``<basename>.pdf`` — the body followed by the attachment pages, with the
+``.eml`` embedded — plus the original attachment files. (A separate body-only
+``_mailonly.pdf`` was written until 26.11.3.)
 """
 
 from __future__ import annotations
@@ -84,7 +82,6 @@ class RenderResult:
     html_rendered: bool = True
     complete: bool = True  # every attachment became pages
     combined_pdf: Path | None = None
-    mail_only_pdf: Path | None = None
     attachments: tuple[AttachmentResult, ...] = field(default_factory=tuple)
 
 
@@ -135,7 +132,6 @@ async def render_mail(
         return RenderResult(basename, written=False, skipped=True)
 
     subfolder = output_dir / basename
-    has_attachments = bool(parsed.attachments)
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
@@ -145,45 +141,25 @@ async def render_mail(
                 ctx, parsed, work, config
             )
 
-        # <basename>.pdf is the full PDF the reader opens: with attachments it is
-        # body + attachment pages; without, just the body. The body-only version
-        # is written alongside as <basename>_mailonly.pdf only when it differs
-        # (i.e. only when there are attachments).
+        # One PDF per mail: the body, followed by the attachment pages if any.
         async with gs_semaphore:
-            mail_only_pdfa = await asyncio.to_thread(
-                _merge_to_pdfa, mail_part, work / "mailonly", config
+            pdfa = await asyncio.to_thread(
+                _merge_to_pdfa, mail_part + attachment_pages, work / "mail", config
             )
-        if has_attachments:
-            async with gs_semaphore:
-                primary_pdfa = await asyncio.to_thread(
-                    _merge_to_pdfa, mail_part + attachment_pages, work / "full", config
-                )
-            mailonly_pdfa: bytes | None = mail_only_pdfa
-        else:
-            primary_pdfa = mail_only_pdfa
-            mailonly_pdfa = None
-        # Each PDF records the mail it shows; the full PDF also carries the .eml
-        # itself. The body-only copy gets the hash alone — embedding the mail
-        # (attachments included) twice would double the folder for nothing.
-        message_id = parsed.headers.message_id
-        primary_pdfa = await asyncio.to_thread(
+        # The PDF records the mail it shows and carries the .eml itself.
+        pdfa = await asyncio.to_thread(
             provenance.stamp,
-            primary_pdfa,
+            pdfa,
             raw,
-            message_id=message_id,
+            message_id=parsed.headers.message_id,
             eml_name=f"{basename}.eml",
             mod_date=timestamp,
         )
-        if mailonly_pdfa is not None:
-            mailonly_pdfa = await asyncio.to_thread(
-                provenance.stamp, mailonly_pdfa, raw, message_id=message_id
-            )
         _store(
             output_dir,
             basename,
             identity=identity,
-            primary_pdfa=primary_pdfa,
-            mailonly_pdfa=mailonly_pdfa,
+            pdfa=pdfa,
             originals=[(a.filename, a.content) for a in parsed.attachments],
         )
 
@@ -193,11 +169,6 @@ async def render_mail(
         html_rendered=html_ok,
         complete=all(r.outcome.ok for r in results),
         combined_pdf=subfolder / f"{basename}.pdf",
-        mail_only_pdf=(
-            subfolder / f"{basename}_mailonly.pdf"
-            if has_attachments
-            else subfolder / f"{basename}.pdf"
-        ),
         attachments=tuple(results),
     )
 
@@ -545,23 +516,19 @@ def _store(
     basename: str,
     *,
     identity: str,
-    primary_pdfa: bytes,
-    mailonly_pdfa: bytes | None,
+    pdfa: bytes,
     originals: list[tuple[str, bytes]],
 ) -> None:
     """Write one mail's folder atomically with archive permissions.
 
-    Every mail gets its own ``<basename>/`` folder. ``<basename>.pdf`` is the
-    full PDF the reader opens (body + attachment pages when there are
-    attachments; otherwise just the body). When it has attachments, the
-    body-only version is written alongside as ``<basename>_mailonly.pdf`` and the
-    original attachment files are kept in the folder too. There is never a loose
-    PDF at the output root, so a mail's PDF is not duplicated across two places.
+    Every mail gets its own ``<basename>/`` folder holding ``<basename>.pdf``
+    (body + attachment pages) and the original attachment files. There is never
+    a loose PDF at the output root.
 
     The folder is built under a staging name and moved into place with a single
     atomic rename, so its presence means the mail is complete — nothing is
-    written after the rename. Our reserved PDF names are written before the
-    originals, so an attachment that happens to share a name is disambiguated
+    written after the rename. The PDF is written before the originals, so an
+    attachment that happens to share its name is disambiguated
     rather than clobbering them. Files are 0400, the folder 0700 (via
     write_readonly + disambiguate); a ``.imaparc-manifest`` records the mail
     identity so a later run tells a re-render from a distinct basename collision.
@@ -570,9 +537,7 @@ def _store(
     _remove_tree(staging)
     make_dir(staging)
     write_readonly(staging / MANIFEST, identity.encode("utf-8"))
-    write_readonly(staging / f"{basename}.pdf", primary_pdfa)
-    if mailonly_pdfa is not None:
-        write_readonly(staging / f"{basename}_mailonly.pdf", mailonly_pdfa)
+    write_readonly(staging / f"{basename}.pdf", pdfa)
     for name, content in originals:
         write_readonly(staging / _safe_attachment_name(name), content)
     os.chmod(staging, DIR_MODE)

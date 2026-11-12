@@ -25,7 +25,12 @@ from imaparc.exceptions import ImapArcError
 from imaparc.humanize import format_file_size
 from imaparc.mail.parser import parse_mail
 from imaparc.naming import build_base_name
-from imaparc.profiles import Profile, attachments_match, matches
+from imaparc.profiles import (
+    Profile,
+    archived_eml_dir,
+    attachments_match,
+    matches,
+)
 from imaparc.sources.deliver import deliver_eml
 from imaparc.sources.imap import ImapConnection, ScannedMessage
 from imaparc.state import StateStore
@@ -418,7 +423,10 @@ def _fetch_folder(
                 # if the archive was moved away or the output path changed, a
                 # delete/move here would destroy the only copy. "imapArc
                 # preserves" holds even for server-side deletion.
-                if eml_path.exists():
+                # A rendered mail's .eml has moved on to the eml-Archiv under
+                # the same file name; that counts as the local copy too.
+                archived = archived_eml_dir(profile.output) / eml_path.name
+                if eml_path.exists() or archived.exists():
                     # Best-effort: the archive is durable, so a server failure
                     # warns and is counted, never crashes the folder.
                     _post_fetch(conn, folder, message.uid, profile, report)
