@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.8] - 2026-11-12
+
 ### Fixed
 - **A password-protected PDF in a profile directory no longer aborts `render`,
   `eml` or `verify`.** Reading a PDF's identity raised on encrypted files; such
