@@ -82,8 +82,7 @@ def reflowed_rendition(margin_mm: float = MARGIN_MM) -> Rendition:
     """Readable rendition: full font size, paginated cleanly by Chromium.
 
     Rendered 1:1 when the mail fits A4 portrait; if its measured width overflows,
-    it is scaled down, and if that would shrink it too much it is put on A4
-    landscape instead (see ``render_html_to_pdf``/``_fit_width``).
+    it is scaled down — always onto portrait (see ``_fit_width``).
     """
     return Rendition(
         name="reflowed",

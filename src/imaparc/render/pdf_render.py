@@ -42,9 +42,8 @@ from imaparc.render.geometry import (
 
 logger = logging.getLogger(__name__)
 
-# If fitting a wide mail onto A4 portrait would shrink it below this, use A4
-# landscape instead (much wider content area) so it stays readable.
-_LANDSCAPE_THRESHOLD = 0.85
+# Chromium's page.pdf() rejects a scale below this.
+_MIN_PRINT_SCALE = 0.1
 
 # Chromium clamps a single PDF page's height (~200 in). Beyond this the faithful
 # one-page overview of an extremely long mail may be cut off — warn (the reflowed
@@ -65,11 +64,15 @@ _ANNOT_FLAG_PRINT = 4
 # *next* page after our header, and the faithful one-page render captures only
 # the empty first page). Forcing `page: auto` and neutral breaks keeps the body
 # with the header and lets us control pagination via page.pdf().
+# `pre` wraps as it does in a mail client: Apple Mail quotes every paragraph as a
+# single `<pre>` line, which unwrapped lays the mail out thousands of px wide and
+# shrinks it to unreadable size when fitted onto the page.
 _GUARD_STYLE = """
 <style>
   html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   img, table { max-width: 100% !important; }
   img { height: auto !important; }
+  pre { white-space: pre-wrap !important; overflow-wrap: anywhere !important; }
   * {
     page: auto !important;
     page-break-before: auto !important;
@@ -178,10 +181,9 @@ async def render_html_to_pdf(
         await page.emulate_media(media="screen")
         if rendition.fit_page:
             return await _render_fit_page(page, rendition.margin_mm, rendition.left_mm)
-        landscape, scale = await _fit_width(page, rendition)
+        scale = await _fit_width(page, rendition)
         return await page.pdf(
             format="A4",
-            landscape=landscape,
             print_background=True,
             scale=scale,
             prefer_css_page_size=False,
@@ -200,15 +202,15 @@ async def render_html_to_pdf(
         await page.close()
 
 
-async def _fit_width(page: object, rendition: Rendition) -> tuple[bool, float]:
-    """Choose orientation and print scale so the mail's width fits the page.
+async def _fit_width(page: object, rendition: Rendition) -> float:
+    """Return the print scale that fits the mail's width onto A4 portrait.
 
     Mails are built to fit a screen without horizontal scrolling, so the content
     width is bounded — so measure it rather than assume a reference width. If it
-    fits A4 portrait, render 1:1. If it overflows, scale down; but if that would
-    drop below :data:`_LANDSCAPE_THRESHOLD`, switch to A4 **landscape** (a much
-    wider content area) so a wide mail stays readable. Chromium then paginates
-    cleanly between lines. Returns ``(landscape, scale)``.
+    fits, render 1:1; if it overflows, scale down. The page stays portrait
+    regardless: an archive of mails reads, prints and files as one format, and a
+    sideways page for one wide newsletter breaks that. Chromium then paginates
+    cleanly between lines.
     """
     portrait_px = mm_to_css_px(A4_WIDTH_MM - rendition.left_mm - rendition.margin_mm)
     await page.set_viewport_size(  # type: ignore[attr-defined]
@@ -220,12 +222,8 @@ async def _fit_width(page: object, rendition: Rendition) -> tuple[bool, float]:
     )
     content_px = max(float(measured), 1.0)
     if content_px <= portrait_px:
-        return False, rendition.scale
-    portrait_scale = portrait_px / content_px
-    if portrait_scale >= _LANDSCAPE_THRESHOLD:
-        return False, portrait_scale
-    landscape_px = mm_to_css_px(A4_HEIGHT_MM - rendition.left_mm - rendition.margin_mm)
-    return True, min(rendition.scale, landscape_px / content_px)
+        return rendition.scale
+    return max(_MIN_PRINT_SCALE, portrait_px / content_px)
 
 
 async def _render_fit_page(page: object, margin_mm: float, left_mm: float) -> bytes:

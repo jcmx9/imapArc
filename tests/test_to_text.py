@@ -43,6 +43,29 @@ def test_entities_unescaped_and_tags_stripped() -> None:
     assert "<" not in text.replace("< 100", "")  # no leftover tag brackets
 
 
+def test_quotes_are_prefixed_per_nesting_level() -> None:
+    """An HTML-only reply keeps who said what: each quote level gets a ``>``."""
+    text = html_to_text(
+        "<p>Antwort</p>"
+        "<blockquote type='cite'><p>Zitat</p>"
+        "<blockquote type='cite'><p>Tiefer</p></blockquote>"
+        "<p>wieder eins</p></blockquote>"
+        "<p>Schluss</p>"
+    )
+    lines = [ln for ln in text.splitlines() if ln.strip(" >")]
+    assert lines == ["Antwort", "> Zitat", ">> Tiefer", "> wieder eins", "Schluss"]
+
+
+def test_consecutive_pre_blocks_stay_separate_lines() -> None:
+    # Apple Mail puts each quoted paragraph in its own <pre>.
+    text = html_to_text("<pre>Erster Absatz.</pre><pre>Zweiter Absatz.</pre>")
+    assert "Erster Absatz.\nZweiter Absatz." in text
+
+
+def test_byte_order_marks_are_dropped() -> None:
+    assert html_to_text("<p>\ufeffHallo</p>") == "Hallo"
+
+
 def test_unparseable_is_empty() -> None:
     # Bare text is still parseable by lxml; truly broken input degrades to "".
     assert isinstance(html_to_text("<<<"), str)
@@ -56,6 +79,15 @@ _TRIVIAL = [
     "<p style='font-family:Arial;color:#333;margin:0;text-align:center'>x</p>",
     "<html><head><style>p{margin:0}</style></head><body><p>nur text</p></body></html>",
     "<span>schlicht</span>",
+    # Mail-client scaffolding: the text/plain part carries all of it as text.
+    "<p>a</p><blockquote type='cite'><p>zitiert</p></blockquote>",
+    "<blockquote class='gmail_quote' style='border-left:1px #ccc solid'>q</blockquote>",
+    "<ul class='MailOutline'><li>17.11.</li><li>20.11.</li></ul>",  # simple list
+    "<pre style='overflow-wrap: break-word'>Hallo Roland,</pre>",  # Apple Mail quote
+    "<font face='Arial' size='2'>Gruß</font>",
+    "<a class='moz-txt-link-rfc2396E' href='mailto:a@b.de'>&lt;a@b.de&gt;</a>",
+    "<a href='https://example.com/x'>https://example.com/x</a>",
+    "<a href='http://www.example.com/'>www.example.com</a>",
 ]
 
 _RICH = [
@@ -64,7 +96,11 @@ _RICH = [
     "<p>see <a href='http://x'>link</a></p>",  # link
     "<p>this is <b>bold</b></p>",  # emphasis
     "<h1>Titel</h1><p>text</p>",  # heading
-    "<ul><li>a</li><li>b</li></ul>",  # list
+    "<a href='mailto:a@b.de'>Schreib mir</a>",  # link text hides the target
+    "<a href='https://evil.example'>https://bank.example</a>",  # text ≠ target
+    "<font color='red'>rot</font>",  # colour is not text-equivalent
+    "<blockquote><img src='x.png'></blockquote>",  # quote does not excuse an image
+    "<blockquote style='background:#eee'>q</blockquote>",  # shaded box, not a bar
     "<div style='background:#eee'>boxed</div>",  # background
     "<div style='border:1px solid'>boxed</div>",  # border
     "<style>td{background:red}</style><p>x</p>",  # box style in <style>

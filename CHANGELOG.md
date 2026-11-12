@@ -5,6 +5,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Plain replies are rendered as text only.** The scaffolding mail clients put
+  around a plain reply — quotes (`blockquote`, including Gmail's quote bar),
+  simple lists, `pre`, a `font` face, and links whose text *is* their target
+  (autolinked addresses) — no longer counts as formatting, so such a mail skips
+  the scaled overview and the reflowed rendition and gets just the text version.
+  A link whose text differs from its target, colour, images, tables and
+  backgrounds still keep the HTML renditions.
+- **Mail pages are always A4 portrait.** A mail too wide for the page is scaled
+  down instead of being switched to landscape.
+
+### Fixed
+- **Apple Mail quotes no longer blow up the layout.** Apple Mail puts each quoted
+  paragraph into one unwrapped `<pre>` line, which made the reflowed rendition
+  thousands of pixels wide. `pre` now wraps as in a mail client.
+- **Text derived from HTML-only mail keeps its structure**: quote levels are
+  prefixed with `>`, consecutive `<pre>` paragraphs no longer run together, and
+  stray byte-order marks are dropped.
+
 ## [26.10.0] - 2026-10-27
 
 ### Fixed
