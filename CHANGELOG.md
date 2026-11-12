@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.10] - 2026-11-12
+
 ### Security
 - **The run lock no longer trusts what it finds in the temp directory.** Where
   `/tmp` is shared, another user could pre-create the lock directory or plant a
