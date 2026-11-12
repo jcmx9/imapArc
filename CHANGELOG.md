@@ -5,6 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`imaparc mailonly`** writes `<name>_mailonly.pdf` — the mail without its
+  attachments' pages — by copying the pages before the first attachment
+  bookmark out of an existing PDF. Nothing is rendered again; the embedded
+  `.eml` and attachments are left out unless `--keep-embedded` is given. It
+  never overwrites and refuses to write into the archive directory itself.
+
+### Changed
+- README (German and English) rewritten around the flat archive: what the
+  archive looks like, what every PDF holds, and one section per task.
+
 ## [26.11.11] - 2026-11-12
 
 ### Added
