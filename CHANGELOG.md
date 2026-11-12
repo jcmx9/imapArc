@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.0] - 2026-11-12
+
 ### Changed
 - **Plain replies are rendered as text only.** The scaffolding mail clients put
   around a plain reply — quotes (`blockquote`, including Gmail's quote bar),
