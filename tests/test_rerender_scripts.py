@@ -370,47 +370,46 @@ def test_apply_moves_folders_below_target_mirroring_home(
     assert (loose["dir"] / "notes.pdf").is_file()
 
 
-def test_apply_writes_the_render_commands(loose: dict[str, Path], home: Path) -> None:
+def test_apply_writes_collect_and_render_scripts(
+    loose: dict[str, Path], home: Path
+) -> None:
     out = home / "out"
     _list(home, out)
 
     result = _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
 
     assert result.returncode == 0, result.stderr
-    script = (out / "render.sh").read_text()
-    assert "\nimaparc render\n" in script
-    # Exactly the extracted file, never the whole directory.
-    assert f"add {loose['dir'] / loose['folder'].name}.eml\n" in script
-    assert f"{loose['dir']}\n" not in script
-    assert "xargs -0 imaparc eml" in script
+    assert "collect.sh" in result.stdout
+    inbox = home / "imapArc" / "emlinput"
+    assert f" collect {out} {inbox}" in (out / "collect.sh").read_text()
+    render = (out / "render.sh").read_text()
+    assert "\nimaparc render\n" in render
+    assert f"imaparc eml {inbox}" in render
 
 
-def test_render_script_can_run_twice(loose: dict[str, Path], home: Path) -> None:
-    """Once imaparc eml filed the .eml away, a re-run must be a no-op."""
+def test_collect_gathers_every_pending_eml_and_can_run_twice(
+    archive: dict[str, Path], loose: dict[str, Path], home: Path
+) -> None:
     out = home / "out"
     _list(home, out)
     _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
-    stub = home / "bin"
-    stub.mkdir()
-    (stub / "imaparc").write_text('#!/usr/bin/env bash\necho "$@" >> "$0.log"\n')
-    (stub / "imaparc").chmod(0o755)
-    env_path = f"{stub}:{os.environ['PATH']}"
+    extracted = loose["dir"] / f"{loose['folder'].name}.eml"
+    inbox_emls = sorted(archive["eml"].glob("*.eml"))  # unconfigured: loose
+    expected = {p.read_bytes() for p in [extracted, *inbox_emls]}
 
     for _ in range(2):
-        result = subprocess.run(
-            ["bash", str(out / "render.sh")],
-            capture_output=True,
-            text=True,
-            check=False,
-            env={**os.environ, "PATH": env_path},
-        )
+        result = _run(out / "collect.sh", home=home)
         assert result.returncode == 0, result.stderr
-        (loose["dir"] / f"{loose['folder'].name}.eml").unlink(missing_ok=True)
 
-    calls = (stub / "imaparc.log").read_text().splitlines()
-    extracted = f"{loose['folder'].name}.eml"
-    assert sum(extracted in c for c in calls) == 1
-    assert calls.count("render") == 2
+    inbox = home / "imapArc" / "emlinput"
+    collected = sorted(inbox.glob("*.eml"))
+    assert {p.read_bytes() for p in collected} == expected
+    assert not extracted.exists()
+    assert not any(p.exists() for p in inbox_emls)
+    # One log line per moved file: where it came from, what it is called now.
+    log = (inbox / "emlinput.log").read_text().splitlines()
+    assert len(log) == len(expected)
+    assert f"{extracted}\t{extracted.name}" in log
 
 
 def test_apply_deletes_listed_folders(archive: dict[str, Path], home: Path) -> None:
