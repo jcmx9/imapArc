@@ -33,6 +33,7 @@ from imaparc.exceptions import (
 from imaparc.extract import extract as extract_from_pdf
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
+from imaparc.mailonly import mail_only
 from imaparc.profiles import Profile, load_profiles
 from imaparc.render_run import run_render
 from imaparc.restore import RestoreOutcome, restore_files, summarise
@@ -720,6 +721,41 @@ def extract(
                 err=True,
             )
             failed = True
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def mailonly(
+    pdfs: Annotated[
+        list[Path],
+        typer.Argument(help="PDFs written by imapArc.", exists=True, dir_okay=False),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Directory to write into."),
+    ] = Path("."),
+    keep_embedded: Annotated[
+        bool,
+        typer.Option("--keep-embedded", help="Keep the embedded .eml and attachments."),
+    ] = False,
+) -> None:
+    """Write <name>_mailonly.pdf: the mail without its attachments' pages.
+
+    Copies the pages before the first attachment out of an existing PDF —
+    nothing is rendered again. The embedded .eml and attachments are left out
+    unless ``--keep-embedded`` is given, so the result is a slim copy to pass
+    on. Written to the current directory (or ``--output``), never over an
+    existing file and never into the archive itself.
+    """
+    failed = False
+    for pdf in pdfs:
+        result = mail_only(pdf, output, keep_embedded=keep_embedded)
+        if result.error or result.written is None:
+            typer.echo(f"Error: {pdf.name}: {result.error}", err=True)
+            failed = True
+            continue
+        typer.echo(f"{result.written}  ({result.pages} of {result.of_pages} pages)")
     if failed:
         raise typer.Exit(1)
 
