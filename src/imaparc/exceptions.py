@@ -29,3 +29,7 @@ class RenderError(ImapArcError):
 
 class PdfaConversionError(ImapArcError):
     """Ghostscript failed to produce a PDF/A document."""
+
+
+class LockError(ImapArcError):
+    """The run lock cannot be taken safely (see ``storage.run_lock``)."""
