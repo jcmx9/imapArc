@@ -313,8 +313,15 @@ _PNG = bytes.fromhex(
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-async def test_remote_images_are_always_loaded(tmp_path: Path) -> None:
-    """`eml` renders what the sender intended, so remote images are fetched.
+@pytest.mark.parametrize("allow_remote", [True, False])
+async def test_remote_images_follow_the_switch(
+    tmp_path: Path, allow_remote: bool
+) -> None:
+    """By default `eml` renders what the sender intended: remote images load.
+
+    With them switched off (`--no-remote-images`) nothing may reach the server —
+    that is the whole point when filing old mail in bulk.
+
 
     Would fail if run_adhoc built its RunConfig with allow_remote=False: the
     browser's network lockdown blocks the request and nothing reaches the server.
@@ -349,13 +356,13 @@ async def test_remote_images_are_always_loaded(tmp_path: Path) -> None:
                 ),
             )
         )
-        await _run([mail], tmp_path / "arc")
+        await _run([mail], tmp_path / "arc", allow_remote=allow_remote)
     finally:
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
 
-    assert "/pixel.png" in requested
+    assert ("/pixel.png" in requested) is allow_remote
 
 
 # --- gs_jobs actually caps Ghostscript --------------------------------------

@@ -38,6 +38,7 @@ from pikepdf import Array, Dictionary, Name, String
 NAMESPACE = "https://github.com/jcmx9/imapArc/ns/provenance/1.0/"
 PREFIX = "imaparc"
 _RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+_DC = "http://purl.org/dc/elements/1.1/"
 _EML_MIME = "message/rfc822"
 # Everything XML 1.0 forbids in character data.
 _XML_INVALID = re.compile(
@@ -95,6 +96,8 @@ def stamp(
     mod_date: datetime | None = None,
     attachments: Sequence[tuple[str, str, bytes]] = (),
     bookmarks: Sequence[tuple[str, int]] = (),
+    title: str | None = None,
+    author: str | None = None,
 ) -> bytes:
     """Return ``pdf_bytes`` with the provenance of ``raw`` written into it.
 
@@ -108,9 +111,18 @@ def stamp(
         attachments: ``(file name, MIME type, content)`` of further files to
             embed — the attachments that could not be shown as pages.
         bookmarks: ``(title, zero-based page index)`` outline entries.
+        title: The document title (the mail's subject) — what a file manager
+            or search shows instead of the file name.
+        author: The document author (the mail's sender).
     """
     with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
-        _write_xmp(pdf, hashlib.sha256(raw).hexdigest(), message_id)
+        _write_xmp(
+            pdf,
+            hashlib.sha256(raw).hexdigest(),
+            message_id,
+            title=_one_line(title),
+            author=_one_line(author),
+        )
         files: list[tuple[str, str, bytes, Name]] = []
         if eml_name is not None:
             files.append((eml_name, _EML_MIME, raw, Name.Source))
@@ -175,25 +187,43 @@ def identity(source: bytes | Path) -> str | None:
     return "\n".join([*lines, f"sha256:{found.sha256}"])
 
 
-def embedded_files(pdf_bytes: bytes) -> dict[str, tuple[str, bytes]]:
+def embedded_files(source: bytes | Path) -> dict[str, tuple[str, bytes]]:
     """Every associated file: name → (``/AFRelationship`` without slash, bytes)."""
     found: dict[str, tuple[str, bytes]] = {}
-    with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
+    opened = io.BytesIO(source) if isinstance(source, bytes) else source
+    with pikepdf.open(opened) as pdf:
         for spec in pdf.Root.get("/AF", Array()):
             relation = str(spec.get("/AFRelationship", Name.Unspecified))[1:]
             found[str(spec.UF)] = (relation, bytes(spec.EF.F.read_bytes()))
     return found
 
 
-def embedded_source(pdf_bytes: bytes) -> bytes | None:
-    """Return the .eml embedded as the PDF's source, if any."""
-    for relation, data in embedded_files(pdf_bytes).values():
-        if relation == "Source":
-            return data
+def embedded_source(source: bytes | Path) -> tuple[str, bytes] | None:
+    """The ``.eml`` embedded as the PDF's source — ``(file name, bytes)`` — if any.
+
+    Reads only that one file, not the attachments embedded beside it.
+    """
+    opened = io.BytesIO(source) if isinstance(source, bytes) else source
+    with pikepdf.open(opened) as pdf:
+        for spec in pdf.Root.get("/AF", Array()):
+            if spec.get("/AFRelationship") == Name.Source:
+                return str(spec.UF), bytes(spec.EF.F.read_bytes())
     return None
 
 
-def _write_xmp(pdf: pikepdf.Pdf, sha256: str, message_id: str | None) -> None:
+def _one_line(text: str | None) -> str:
+    """``text`` as one line of valid XML character data (may be empty)."""
+    return " ".join(_XML_INVALID.sub(" ", text or "").split())
+
+
+def _write_xmp(
+    pdf: pikepdf.Pdf,
+    sha256: str,
+    message_id: str | None,
+    *,
+    title: str = "",
+    author: str = "",
+) -> None:
     if "/Metadata" in pdf.Root:
         root = etree.fromstring(pdf.Root.Metadata.read_bytes())
     else:
@@ -211,6 +241,14 @@ def _write_xmp(pdf: pikepdf.Pdf, sha256: str, message_id: str | None) -> None:
         # The sender picks the Message-ID; a control character in it is not
         # valid XML and would otherwise make the mail impossible to render.
         etree.SubElement(props, f"{{{NAMESPACE}}}messageId").text = cleaned
+    # Title and author go into the XMP *and* the document info dictionary, with
+    # the same value: PDF/A wants the two to agree where both are present.
+    if title:
+        _set_dc(rdf, "title", "Alt", title)
+        pdf.docinfo["/Title"] = title
+    if author:
+        _set_dc(rdf, "creator", "Seq", author)
+        pdf.docinfo["/Author"] = author
     packet = (
         b"<?xpacket begin='\xef\xbb\xbf' id='W5M0MpCehiHzreSzNTczkc9d'?>\n"
         + etree.tostring(root, encoding="utf-8")
@@ -219,6 +257,33 @@ def _write_xmp(pdf: pikepdf.Pdf, sha256: str, message_id: str | None) -> None:
     pdf.Root.Metadata = pikepdf.Stream(
         pdf, packet, Type=Name.Metadata, Subtype=Name.XML
     )
+
+
+def _set_dc(rdf: etree._Element, name: str, container: str, value: str) -> None:
+    """Set the Dublin Core property ``dc:<name>`` to the single ``value``.
+
+    Replaces what Ghostscript wrote (it titles every file "imapArc archive"),
+    as an element *or* as an attribute on a description.
+    """
+    for description in rdf.findall(f"{{{_RDF}}}Description"):
+        if f"{{{_DC}}}{name}" in description.attrib:
+            del description.attrib[f"{{{_DC}}}{name}"]
+        for old in description.findall(f"{{{_DC}}}{name}"):
+            description.remove(old)
+    description = etree.SubElement(
+        rdf, f"{{{_RDF}}}Description", nsmap={"rdf": _RDF, "dc": _DC}
+    )
+    description.set(f"{{{_RDF}}}about", "")
+    item = etree.SubElement(
+        etree.SubElement(
+            etree.SubElement(description, f"{{{_DC}}}{name}"),
+            f"{{{_RDF}}}{container}",
+        ),
+        f"{{{_RDF}}}li",
+    )
+    if container == "Alt":
+        item.set("{http://www.w3.org/XML/1998/namespace}lang", "x-default")
+    item.text = value
 
 
 def _embed(

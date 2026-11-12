@@ -118,6 +118,7 @@ async def run_adhoc(
     root: Path,
     name: str,
     tools: ToolPaths,
+    allow_remote: bool = True,
     jobs: int = 4,
     gs_jobs: int = 2,
     verbosity: int = 1,
@@ -129,11 +130,12 @@ async def run_adhoc(
     as rendered); a mail that failed anywhere stays where it was, so a rerun
     picks it up.
 
-    **Remote images are always loaded here**, unlike ``render`` where they are
-    opt-in per profile. This command renders a mail the user picked out by hand
-    and typically already opened in a client, so the faithful rendition is what
-    is wanted and any tracking pixel has long since fired. The trade-off is real
-    and one-way: rendering fetches those URLs.
+    **Remote images are loaded by default here**, unlike ``render`` where they
+    are opt-in per profile. This command typically renders a mail the user
+    picked out by hand and already opened in a client, so the faithful rendition
+    is what is wanted and any tracking pixel has long since fired. The trade-off
+    is real and one-way — rendering fetches those URLs — so ``allow_remote``
+    can turn it off, which is what a bulk run over old mail should do.
 
     Args:
         files: The ``.eml`` files to render, as returned by :func:`collect_eml`.
@@ -141,6 +143,7 @@ async def run_adhoc(
         root: Archive root; unmatched mail goes to ``<root>/00_Mails``.
         name: Profile name used for unmatched mail (the middle of its name).
         tools: Resolved gs/qpdf/verapdf paths.
+        allow_remote: Whether remote images may be fetched while rendering.
         jobs: Mails rendered concurrently.
         gs_jobs: Ghostscript conversions at once. Deliberately lower than
             ``jobs``: one conversion holds a whole document in memory.
@@ -171,7 +174,7 @@ async def run_adhoc(
                     verbosity=verbosity,
                     jobs=jobs,
                     gs_jobs=gs_jobs,
-                    allow_remote=True,
+                    allow_remote=allow_remote,
                     filename_pattern=profile.filename_pattern,
                     date_format=profile.date_format,
                     max_attachment_bytes=profile.max_attachment_bytes,
@@ -193,7 +196,9 @@ async def run_adhoc(
         # One browser serves every target, so it gets the most patient of
         # their timeouts rather than the fallback profile's default.
         timeout_ms = max(p.render_timeout_ms for p in [*profiles, fallback])
-        async with BrowserPool(allow_remote=True, timeout_ms=timeout_ms) as pool:
+        async with BrowserPool(
+            allow_remote=allow_remote, timeout_ms=timeout_ms
+        ) as pool:
 
             async def process(eml: Path) -> list[RenderResult]:
                 done: list[tuple[_Target, RenderResult]] = []

@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`imaparc extract`** takes the original `.eml` back out of a PDF (`--all`
+  also the embedded attachments), never overwriting, and says whether it
+  matches the hash the PDF records.
+- **`imaparc verify --deep`** reads every file: the mail embedded in each PDF
+  must be the one the PDF records (a mismatch counts as damage); PDFs whose
+  `.eml` is no longer archived and byte-identical `.eml` copies are reported.
+- **`imaparc eml --no-remote-images`** renders without fetching remote
+  content — for filing many old mails at once.
+- **PDF title and author** are the mail's subject and sender (info dictionary
+  and XMP), instead of "imapArc archive" on every file.
+
 ## [26.11.10] - 2026-11-12
 
 ### Security
