@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.11] - 2026-11-12
+
 ### Added
 - **`imaparc extract`** takes the original `.eml` back out of a PDF (`--all`
   also the embedded attachments), never overwriting, and says whether it
