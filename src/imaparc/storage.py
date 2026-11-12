@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import fcntl
 import os
+import stat
 import tempfile
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
+
+from imaparc.exceptions import LockError
 
 FILE_MODE = 0o400
 # Owner rwx: the archive is private (no group/other access) yet the owner can
@@ -113,13 +116,39 @@ def run_lock(wait_message: Callable[[], None] | None = None) -> Generator[None]:
     is called once if it has to. The lock file lives in the temp directory
     (``IMAPARC_LOCK_DIR`` overrides it) and is released by the OS if the process
     dies.
+
+    Raises:
+        LockError: If the lock directory is not a private directory of this
+            user, or the lock file cannot be opened safely.
     """
     directory = Path(
         os.environ.get("IMAPARC_LOCK_DIR")
         or Path(tempfile.gettempdir()) / f"imaparc-{os.getuid()}"
     )
-    directory.mkdir(parents=True, exist_ok=True)
-    with open(directory / "render.lock", "w") as handle:
+    # The temp directory may be shared (/tmp on Linux), so nothing here trusts
+    # what is already there: the directory must be ours and private, and the
+    # lock file is opened without following a symlink and without truncating —
+    # otherwise another user could plant a link and have us empty a file.
+    with suppress(FileExistsError):
+        directory.mkdir(mode=DIR_MODE, parents=True)
+    try:
+        info = os.lstat(directory)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            raise LockError(
+                f"lock directory {directory} is not a directory of this user — "
+                "remove it, or set IMAPARC_LOCK_DIR"
+            )
+        if info.st_mode & 0o077:
+            # Ours, but open to others (26.11.9 created it that way): close it.
+            os.chmod(directory, DIR_MODE)
+        fd = os.open(
+            directory / "render.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+        )
+    except OSError as exc:
+        raise LockError(f"cannot use lock directory {directory}: {exc}") from exc
+    with os.fdopen(fd, "r+") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

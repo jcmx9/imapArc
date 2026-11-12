@@ -26,6 +26,7 @@ from imaparc.doctor import Status, exit_code, run_checks
 from imaparc.exceptions import (
     BrowserLaunchError,
     ImapArcError,
+    LockError,
     SourceError,
     ToolNotFoundError,
 )
@@ -557,7 +558,7 @@ def eml(
                     verbosity=verbosity,
                 )
             )
-    except BrowserLaunchError as exc:
+    except (BrowserLaunchError, LockError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
     except KeyboardInterrupt:
@@ -913,7 +914,7 @@ def _do_render(
             report = asyncio.run(
                 run_render(targets, tools, allow_remote_images, jobs, verbosity)
             )
-    except BrowserLaunchError as exc:
+    except (BrowserLaunchError, LockError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
     except KeyboardInterrupt:

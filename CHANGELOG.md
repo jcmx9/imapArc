@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **The run lock no longer trusts what it finds in the temp directory.** Where
+  `/tmp` is shared, another user could pre-create the lock directory or plant a
+  symlink under the lock file's name and have imapArc truncate a file of the
+  running user. The directory must now belong to the user and is made private;
+  the lock file is opened without following symlinks and without truncating.
+
 ## [26.11.9] - 2026-11-12
 
 ### Fixed

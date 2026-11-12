@@ -145,3 +145,53 @@ def test_a_second_run_waits_for_the_first() -> None:
     thread.join(timeout=5)
 
     assert events == ["second waits", "first done", "second runs"]
+
+
+def test_the_lock_never_follows_a_planted_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In a shared /tmp another user could link the lock name to our file."""
+    from imaparc.exceptions import LockError
+
+    victim = tmp_path / "precious.txt"
+    victim.write_text("keep me")
+    locks = tmp_path / "locks"
+    locks.mkdir(mode=0o700)
+    (locks / "render.lock").symlink_to(victim)
+    monkeypatch.setenv("IMAPARC_LOCK_DIR", str(locks))
+
+    with pytest.raises(LockError), run_lock():
+        pass
+
+    assert victim.read_text() == "keep me"
+
+
+def test_the_lock_refuses_a_directory_that_is_not_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from imaparc.exceptions import LockError
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "locks").symlink_to(elsewhere)
+    monkeypatch.setenv("IMAPARC_LOCK_DIR", str(tmp_path / "locks"))
+
+    with pytest.raises(LockError), run_lock():
+        pass
+
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_the_lock_directory_is_private_and_the_file_not_truncated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    locks = tmp_path / "locks"
+    locks.mkdir(mode=0o755)  # as 26.11.9 created it
+    (locks / "render.lock").write_text("content")
+    monkeypatch.setenv("IMAPARC_LOCK_DIR", str(locks))
+
+    with run_lock():
+        pass
+
+    assert locks.stat().st_mode & 0o777 == 0o700
+    assert (locks / "render.lock").read_text() == "content"
