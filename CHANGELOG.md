@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.6] - 2026-11-12
+
 ### Changed
 - **Flat archive: one PDF per mail, no folders.** A mail is rendered to
   `<output>/<basename>.pdf`; the per-mail folder with its manifest and the
