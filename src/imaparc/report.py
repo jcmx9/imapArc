@@ -51,8 +51,8 @@ class RunReport:
         lines = [f"{len(self.written)} written, {len(self.skipped)} skipped"]
         if self.incomplete:
             lines.append(
-                f"{len(self.incomplete)} with attachments not embedded as pages "
-                "(shown as info pages, originals kept)"
+                f"{len(self.incomplete)} with attachments not shown as pages "
+                "(info page instead; the file is embedded in the PDF)"
             )
         if self.html_fallback:
             lines.append(

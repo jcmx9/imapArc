@@ -51,7 +51,7 @@ def test_incomplete_counts_only_written_mails() -> None:
     report.add(_result("b", written=False, skipped=True, complete=False))
 
     assert [r.basename for r in report.incomplete] == ["a"]
-    assert "1 with attachments not embedded as pages" in report.summary()
+    assert "1 with attachments not shown as pages" in report.summary()
 
 
 def test_html_fallback_is_reported() -> None:
