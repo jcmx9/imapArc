@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.5] - 2026-11-12
+
 ### Changed
 - **Rerender: collect first, render second.** `rerender-apply.sh` now writes
   `collect.sh`, which gathers every `.eml` outside the configured profile
