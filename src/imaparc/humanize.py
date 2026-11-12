@@ -8,12 +8,13 @@ from datetime import datetime
 def format_date_human(dt: datetime | None) -> str:
     """Return a readable date string for the mail header block.
 
-    ``23.03.2026 02:18``, in the datetime's own timezone. Empty string for a
-    missing date — separate from the filename date format.
+    ``23.03.26, 02:18`` (as Thunderbird prints it), in the datetime's own
+    timezone. Empty string for a missing date — separate from the filename
+    date format.
     """
     if dt is None:
         return ""
-    return dt.strftime("%d.%m.%Y %H:%M")
+    return dt.strftime("%d.%m.%y, %H:%M")
 
 
 def format_file_size(num_bytes: int) -> str:

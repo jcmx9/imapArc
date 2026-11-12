@@ -65,10 +65,8 @@ def render_text(
     """Render the plain-text version page, with the header block on top."""
     return _render(
         "text.html.j2",
-        headers=headers,
+        header_html=_header_fragment(headers, show_bcc=show_bcc, date_str=date_str),
         text=text,
-        show_bcc=show_bcc,
-        date_str=date_str,
     )
 
 
@@ -86,35 +84,40 @@ def render_text_attachment(filename: str, text: str) -> str:
     return _render("text_attachment.html.j2", filename=filename, text=text)
 
 
-def _header_fragment(headers: MailHeaders, *, show_bcc: bool, date_str: str) -> str:
-    """Build an inline-styled header block, independent of the mail's own CSS."""
-    rows: list[tuple[str, str]] = [
-        ("Von", headers.from_),
-        ("An", headers.to),
-        ("CC", headers.cc),
-    ]
-    if show_bcc and headers.bcc:
-        rows.append(("BCC", headers.bcc))
-    if date_str:
-        rows.append(("Datum", date_str))
-    rows.append(("Betreff", headers.subject))
+# Two shaded bands, as Thunderbird prints a mail: subject, sender and date on a
+# light grey, the recipients beneath on a darker one. Inline styles, because the
+# block is inserted into arbitrary mail HTML whose own CSS must not reach it.
+_HEADER_BANDS = ("#efefef", "#dedede")
+_HEADER_STYLE = (
+    "margin:0 0 1.2em 0;font-size:11pt;line-height:1.35;color:#1a1a1a;"
+    "font-family:-apple-system,'Helvetica Neue',Helvetica,Arial,sans-serif"
+)
 
-    parts = []
-    for label, value in rows:
-        if not value:
-            continue
-        parts.append(
-            f'<div style="margin:0 0 2px 0">'
-            f'<span style="font-weight:700">{escape(label)}:</span> '
-            f"{escape(value)}</div>"
-        )
-    inner = "".join(parts)
-    return (
-        '<div style="border-bottom:0.5pt solid #b4b4b4;padding:0 0 8px 0;'
-        "margin:0 0 12px 0;font-size:10pt;line-height:1.45;"
-        'font-family:-apple-system,Arial,sans-serif;color:#1a1a1a">'
-        f"{inner}</div>"
+
+def _header_fragment(headers: MailHeaders, *, show_bcc: bool, date_str: str) -> str:
+    """Build the header block shown above every mail body.
+
+    Subject, sender and date form the first band; To, CC and (if shown) BCC the
+    second. Empty fields and an empty band are left out.
+    """
+    bands: tuple[list[tuple[str, str]], list[tuple[str, str]]] = (
+        [("Betreff", headers.subject), ("Von", headers.from_), ("Datum", date_str)],
+        [("An", headers.to), ("CC", headers.cc)],
     )
+    if show_bcc:
+        bands[1].append(("BCC", headers.bcc))
+
+    blocks = []
+    for colour, rows in zip(_HEADER_BANDS, bands, strict=True):
+        lines = "".join(
+            f'<div><span style="font-weight:700">{escape(label)}:</span> '
+            f"{escape(value)}</div>"
+            for label, value in rows
+            if value
+        )
+        if lines:
+            blocks.append(f'<div style="background:{colour}">{lines}</div>')
+    return f'<div class="m2p-header" style="{_HEADER_STYLE}">{"".join(blocks)}</div>'
 
 
 def prepend_header(

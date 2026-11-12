@@ -19,6 +19,7 @@ Leitprinzip: **imapArc bewahrt, es verändert nicht.** Die vollständige Rohmail
 - **Lesbare `.eml`-Dateien** mit demselben Namen wie das PDF; in jedem Mailprogramm einzeln zu öffnen.
 - **Echtes Browser-Rendering** über Chromium — auch komplexes Newsletter-HTML originalgetreu, bis zu drei Fassungen je Mail (umgebrochen, Nur-Text sowie eine skalierte Ein-Seiten-Übersicht bei mehrseitigen Mails).
 - **Kein Nachladen externer Ressourcen** — Tracking-Pixel werden vor dem Rendern entfernt. (Ausnahme: `imaparc eml` lädt sie bewusst, siehe dort.)
+- **Selbstbelegende PDFs:** Jede PDF nennt in ihren Metadaten Message-ID und SHA-256 der `.eml`, aus der sie entstand; die vollständige PDF trägt die `.eml` zudem als eingebettete Quelldatei (PDF/A-3). Herauskopiert oder umbenannt bleibt sie so ihrer Mail zuzuordnen.
 - **Schützendes, privates Archiv** — Dateien `0400` (read-only Inhalt), Verzeichnisse `0700` (privat, aber vom Besitzer verwaltbar), **nie überschreiben** (Kollision → `…-2`).
 
 ## Voraussetzungen

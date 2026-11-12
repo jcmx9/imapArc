@@ -98,6 +98,27 @@ def test_prepend_header_escapes_values() -> None:
     assert "&lt;b&gt;bold" in result
 
 
+def test_header_orders_subject_sender_date_then_recipients() -> None:
+    headers = MailHeaders(from_="a@x.com", to="b@y.com", cc="c@z.com", subject="Hi")
+    html = prepend_header(
+        "<html><body></body></html>", headers, show_bcc=True, date_str="18.05.26"
+    )
+    order = [html.index(f"{label}:") for label in ("Betreff", "Von", "Datum", "An")]
+    assert order == sorted(order)
+    assert html.index("An:") < html.index("CC:")
+    # Two bands: subject/sender/date light, recipients darker.
+    light, dark = html.index("#efefef"), html.index("#dedede")
+    assert light < html.index("Betreff:") < html.index("Datum:") < dark
+    assert dark < html.index("An:")
+
+
+def test_header_leaves_out_an_empty_recipient_band() -> None:
+    html = render_text(MailHeaders(from_="a@x.com"), "b", show_bcc=True, date_str="")
+    assert "#efefef" in html
+    assert "#dedede" not in html
+    assert "Datum:" not in html
+
+
 def test_section_separator_shows_title() -> None:
     html = render_section_separator("Nur-Text-Version")
     assert "Nur-Text-Version" in html
