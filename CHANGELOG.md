@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.1] - 2026-11-12
+
 ### Added
 - **`scripts/rerender-list.sh` / `scripts/rerender-apply.sh`** to rebuild an
   archive's PDFs with a newer imapArc. `render` never overwrites, so the old
