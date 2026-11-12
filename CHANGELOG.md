@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`scripts/rerender-list.sh` / `scripts/rerender-apply.sh`** to rebuild an
+  archive's PDFs with a newer imapArc. `render` never overwrites, so the old
+  folders have to be set aside first — and only those whose mail provably still
+  exists as `.eml`: by the manifest's content hash, or for manifests older than
+  26.8.12 by the Message-ID *and* the PDF's own text layer showing that mail's
+  sender, date, subject and body opening. Never by name. The list step is
+  read-only; the apply step re-checks every folder, asks for confirmation and
+  moves (reversible) or deletes. The checks live in `scripts/rerender_check.py`.
+
 ## [26.11.0] - 2026-11-12
 
 ### Changed
