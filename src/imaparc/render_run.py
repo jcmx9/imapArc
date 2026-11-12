@@ -1,4 +1,4 @@
-"""Orchestrate the render phase: profile ``eml/`` directories → ``pdf/`` folders.
+"""Orchestrate the render phase: each profile's ``.eml`` files → one PDF each.
 
 The counterpart to :mod:`imaparc.fetch` for the second phase, and the sibling of
 :mod:`imaparc.adhoc` for the profile-driven case. Lives here rather than in the
@@ -22,7 +22,13 @@ from imaparc.config import RunConfig, ToolPaths
 from imaparc.console import make_progress
 from imaparc.exceptions import ImapArcError
 from imaparc.mail.parser import parse_mail
-from imaparc.pipeline import ArchiveIndex, RenderResult, render_mail, sweep_staging
+from imaparc.pipeline import (
+    ArchiveIndex,
+    RenderResult,
+    is_rendered,
+    render_mail,
+    sweep_staging,
+)
 from imaparc.profiles import Profile, archived_eml_dir
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
@@ -62,10 +68,16 @@ async def run_render(
     report = RunReport()
     plans: list[tuple[Profile, RunConfig, Path, list[Path]]] = []
     for profile in profiles:
-        eml_dir = profile.output / "eml"
-        if not eml_dir.is_dir():
+        archive, inbox = archived_eml_dir(profile.output), profile.output / "eml"
+        mails = [
+            *(EmlSource(archive).paths() if archive.is_dir() else []),
+            # The eml/ inbox of versions before 26.11.6: rendered from there
+            # and then moved into the archive.
+            *(EmlSource(inbox).paths() if inbox.is_dir() else []),
+        ]
+        if not archive.is_dir() and not inbox.is_dir():
             logger.warning(
-                "profile '%s': no eml/ at %s — run fetch first", profile.name, eml_dir
+                "profile '%s': no mail at %s — run fetch first", profile.name, archive
             )
             continue
         jobs = cli_jobs if cli_jobs is not None else profile.jobs
@@ -83,9 +95,7 @@ async def run_render(
             attachment_timeout_s=profile.attachment_timeout_s,
             render_timeout_ms=profile.render_timeout_ms,
         )
-        plans.append(
-            (profile, config, profile.output / "pdf", EmlSource(eml_dir).paths())
-        )
+        plans.append((profile, config, profile.output, mails))
 
     total = sum(len(mails) for *_, mails in plans)
     with make_progress(disable=verbosity == 0 or total == 0) as progress:
@@ -126,24 +136,27 @@ async def _render_profile(
     progress: Progress,
     task: TaskID,
 ) -> None:
-    """Render every mail in one profile's ``eml/`` into its ``pdf/`` directory.
+    """Render every mail of one profile into ``<output>/<basename>.pdf``.
 
-    A mail whose folder exists afterwards — rendered now, or found already
-    rendered — has its ``.eml`` moved on to the profile's ``eml-Archiv``
-    directory under its own file name, so ``eml/`` holds only what still waits.
+    The mail comes from the profile's ``eml-Archiv`` directory, where it stays.
+    One still in a legacy ``eml/`` inbox moves on to the ``eml-Archiv`` once its
+    PDF exists — at the end of the run at the latest, so a copy skipped because
+    its twin was still rendering is not left behind.
     """
     make_dir(output)
     os.chmod(output, 0o700)  # owner-writable, private (same as DIR_MODE at rest)
-    sweep_staging(output)  # clear any .staging-* left by a previously aborted run
+    sweep_staging(output)  # clear temp files left by a previously aborted run
 
     # Shared across this profile's concurrent renders: distinct mails resolving
     # to one basename reserve distinct names, while two copies of the same mail
-    # (two UIDs, one Message-ID) collapse into a single folder.
+    # (two UIDs, one Message-ID) collapse into a single PDF.
     claimed: dict[str, str] = {}
-    # What is already archived, by manifest: a mail stored under an older naming
+    # What is already archived, by identity: a mail stored under an older naming
     # scheme is recognised instead of being rendered again under its new name.
     existing = ArchiveIndex.scan(output)
-    archive_dir = archived_eml_dir(profile.output)
+    archive_dir = archived_eml_dir(output)
+    inbox = output / "eml"
+    pending: list[tuple[Path, str]] = []
 
     async def process(path: Path) -> RenderResult | None:
         async with semaphore:
@@ -182,12 +195,8 @@ async def _render_profile(
                         len(parsed.attachments),
                         "" if result.complete else ", some kept as originals",
                     )
-                # Rendered (now or earlier): the .eml leaves the inbox for the
-                # archive. Only once the folder exists — a copy whose twin is
-                # still rendering concurrently waits for the next run.
-                if (output / result.basename).is_dir():
-                    archived = file_away(path, raw, [(archive_dir, path.stem)])
-                    logger.debug("  archived %s → %s", path.name, archived[0])
+                if path.parent == inbox:
+                    pending.append((path, result.basename))
                 return result
             except (ImapArcError, OSError) as exc:
                 # One bad mail must not abort the whole profile's render.
@@ -205,5 +214,13 @@ async def _render_profile(
                 report.add(result)
             elif isinstance(result, BaseException):
                 logger.error("Unexpected error while rendering a mail: %s", result)
+        # Only now, with every render finished: a copy skipped because its twin
+        # was still being written finds that PDF in place too.
+        for path, basename in pending:
+            if is_rendered(output, basename):
+                try:
+                    file_away(path, path.read_bytes(), [(archive_dir, path.stem)])
+                except OSError as exc:
+                    logger.error("Could not archive %s: %s", path, exc)
     finally:
         os.chmod(output, DIR_MODE)  # immutable at rest

@@ -36,8 +36,9 @@ def _profiles_yaml(tmp_path: Path, output: Path, *, name: str, pdf: bool) -> Pat
     return path
 
 
-def _eml_under(output: Path, *mails: bytes) -> None:
-    eml = output / "eml"
+def _eml_under(output: Path, *mails: bytes, legacy: bool = False) -> None:
+    """Mail as fetch leaves it: in eml-Archiv/<output name>/ (or legacy eml/)."""
+    eml = output / "eml" if legacy else output.parent / "eml-Archiv" / output.name
     eml.mkdir(parents=True)
     for i, raw in enumerate(mails):
         (eml / f"2026-03-23_00-00-{i:02d}_p_m{i}.eml").write_bytes(raw)
@@ -101,20 +102,36 @@ def test_render_command_end_to_end(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["render", "--profiles", str(profiles)])
     assert result.exit_code == 0, result.output
-    # Each mail is a folder holding its <basename>.pdf (attachment-less here).
-    folders = sorted(p for p in (output / "pdf").iterdir() if p.is_dir())
-    assert len(folders) == 2
-    assert all("_acme_" in p.name for p in folders)
-    assert all((f / f"{f.name}.pdf").exists() for f in folders)
-    # Rendered mail leaves the eml/ inbox for the eml-Archiv, names unchanged.
-    assert list((output / "eml").iterdir()) == []
+    # Each mail is one PDF directly in the output directory.
+    pdfs = sorted(output.glob("*.pdf"))
+    assert len(pdfs) == 2
+    assert all("_acme_" in p.name for p in pdfs)
+    assert sorted(p.name for p in output.iterdir()) == [p.name for p in pdfs]
+    # The .eml stay where fetch put them.
     archived = sorted(p.name for p in (tmp_path / "eml-Archiv" / "vault").iterdir())
     assert archived == ["2026-03-23_00-00-00_p_m0.eml", "2026-03-23_00-00-01_p_m1.eml"]
 
     # Second run is idempotent: nothing new written.
     again = runner.invoke(app, ["render", "--profiles", str(profiles)])
     assert again.exit_code == 0
-    assert len(sorted(p for p in (output / "pdf").iterdir() if p.is_dir())) == 2
+    assert len(list(output.glob("*.pdf"))) == 2
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+def test_render_moves_mail_from_a_legacy_inbox_to_the_archive(tmp_path: Path) -> None:
+    output = tmp_path / "vault"
+    _eml_under(output, build_mail(subject="Alt"), legacy=True)
+    profiles = _profiles_yaml(tmp_path, output, name="acme", pdf=True)
+
+    result = runner.invoke(app, ["render", "--profiles", str(profiles)])
+
+    assert result.exit_code == 0, result.output
+    assert len(list(output.glob("*.pdf"))) == 1
+    assert list((output / "eml").iterdir()) == []
+    assert [p.name for p in (tmp_path / "eml-Archiv" / "vault").iterdir()] == [
+        "2026-03-23_00-00-00_p_m0.eml"
+    ]
 
 
 @pytest.mark.requires_chromium
@@ -125,13 +142,13 @@ def test_render_recognises_rendered_mail_under_an_older_name(tmp_path: Path) -> 
     _eml_under(output, build_mail(subject="Termin am 17. November, 14 Uhr"))
     profiles = _profiles_yaml(tmp_path, output, name="acme", pdf=True)
     assert runner.invoke(app, ["render", "--profiles", str(profiles)]).exit_code == 0
-    (folder,) = (p for p in (output / "pdf").iterdir() if p.is_dir())
-    folder.rename(folder.with_name("2026-03-23_acme_Termin_am_17._November,_14_Uhr"))
+    (pdf,) = output.glob("*.pdf")
+    pdf.rename(pdf.with_name("2026-03-23_acme_Termin_am_17._November,_14_Uhr.pdf"))
 
     again = runner.invoke(app, ["render", "--profiles", str(profiles)])
 
     assert again.exit_code == 0, again.output
-    assert len([p for p in (output / "pdf").iterdir() if p.is_dir()]) == 1
+    assert len(list(output.glob("*.pdf"))) == 1
 
 
 # --- timestamp fallback (moved here with the render orchestration) ----------

@@ -10,6 +10,10 @@ link. So the finished PDF/A-3b carries its provenance inside:
   ``pdfaExtension`` description is written alongside; without it veraPDF fails.
 - **The .eml itself** (optional), as a PDF/A-3 *associated file* with
   ``/AFRelationship /Source`` — the PDF then holds its own original.
+- **Attachments that did not become pages** (optional), as associated files
+  with ``/AFRelationship /Data``, so a Word file or an archive opens from the
+  PDF reader's attachment panel without first extracting the ``.eml``.
+- **Bookmarks** (optional) to the start of the mail and to each separator page.
 
 The PDF is rewritten by pikepdf after Ghostscript, with existing streams left
 as they are: PDF/A forbids a filter on the metadata stream, and a blanket
@@ -20,9 +24,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import zlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import pikepdf
 from lxml import etree
@@ -31,6 +38,8 @@ from pikepdf import Array, Dictionary, Name, String
 NAMESPACE = "https://github.com/jcmx9/imapArc/ns/provenance/1.0/"
 PREFIX = "imaparc"
 _RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+_EML_MIME = "message/rfc822"
+_MIME = re.compile(r"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*")
 
 _PROPERTIES = (
     ("sourceSha256", "SHA-256 of the raw e-mail (.eml) this PDF was rendered from"),
@@ -80,6 +89,8 @@ def stamp(
     message_id: str | None,
     eml_name: str | None = None,
     mod_date: datetime | None = None,
+    attachments: Sequence[tuple[str, str, bytes]] = (),
+    bookmarks: Sequence[tuple[str, int]] = (),
 ) -> bytes:
     """Return ``pdf_bytes`` with the provenance of ``raw`` written into it.
 
@@ -89,12 +100,24 @@ def stamp(
         message_id: The mail's Message-ID, if it has one.
         eml_name: When given, ``raw`` is also embedded under this file name as
             the PDF's source; ``None`` records the hash only.
-        mod_date: Modification date stored with the embedded file.
+        mod_date: Modification date stored with the embedded files.
+        attachments: ``(file name, MIME type, content)`` of further files to
+            embed — the attachments that could not be shown as pages.
+        bookmarks: ``(title, zero-based page index)`` outline entries.
     """
     with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
         _write_xmp(pdf, hashlib.sha256(raw).hexdigest(), message_id)
+        files: list[tuple[str, str, bytes, Name]] = []
         if eml_name is not None:
-            _embed_source(pdf, raw, eml_name, mod_date)
+            files.append((eml_name, _EML_MIME, raw, Name.Source))
+        files += [(name, mime, data, Name.Data) for name, mime, data in attachments]
+        if files:
+            _embed(pdf, files, mod_date)
+        if bookmarks:
+            with pdf.open_outline() as outline:
+                outline.root.extend(
+                    pikepdf.OutlineItem(title, page) for title, page in bookmarks
+                )
         out = io.BytesIO()
         pdf.save(
             out,
@@ -104,12 +127,23 @@ def stamp(
     return out.getvalue()
 
 
-def read(pdf_bytes: bytes) -> Provenance | None:
-    """Read the provenance a PDF records, or ``None`` if it records none."""
-    with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
+def read(source: bytes | Path) -> Provenance | None:
+    """Read the provenance a PDF records, or ``None`` if it records none.
+
+    ``source`` may be a path: pikepdf then reads only what it needs, which
+    matters when a whole archive is indexed.
+    """
+    try:
+        pdf = pikepdf.open(io.BytesIO(source) if isinstance(source, bytes) else source)
+    except (pikepdf.PdfError, OSError):
+        return None
+    with pdf:
         if "/Metadata" not in pdf.Root:
             return None
-        root = etree.fromstring(pdf.Root.Metadata.read_bytes())
+        try:
+            root = etree.fromstring(pdf.Root.Metadata.read_bytes())
+        except etree.XMLSyntaxError:
+            return None
     sha = root.find(f".//{{{NAMESPACE}}}sourceSha256")
     if sha is None or not sha.text:
         return None
@@ -117,12 +151,34 @@ def read(pdf_bytes: bytes) -> Provenance | None:
     return Provenance(sha.text, mid.text if mid is not None else None)
 
 
-def embedded_source(pdf_bytes: bytes) -> bytes | None:
-    """Return the .eml embedded as the PDF's source, if any."""
+def identity(source: bytes | Path) -> str | None:
+    """The mail identity a PDF records, in the manifest's line format.
+
+    ``<Message-ID>`` (when the mail has one) and ``sha256:<hash>``, one per line
+    — so it compares with :func:`imaparc.pipeline.same_mail` like a manifest.
+    """
+    found = read(source)
+    if found is None:
+        return None
+    lines = [found.message_id] if found.message_id else []
+    return "\n".join([*lines, f"sha256:{found.sha256}"])
+
+
+def embedded_files(pdf_bytes: bytes) -> dict[str, tuple[str, bytes]]:
+    """Every associated file: name → (``/AFRelationship`` without slash, bytes)."""
+    found: dict[str, tuple[str, bytes]] = {}
     with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
         for spec in pdf.Root.get("/AF", Array()):
-            if spec.get("/AFRelationship") == Name.Source:
-                return bytes(spec.EF.F.read_bytes())
+            relation = str(spec.get("/AFRelationship", Name.Unspecified))[1:]
+            found[str(spec.UF)] = (relation, bytes(spec.EF.F.read_bytes()))
+    return found
+
+
+def embedded_source(pdf_bytes: bytes) -> bytes | None:
+    """Return the .eml embedded as the PDF's source, if any."""
+    for relation, data in embedded_files(pdf_bytes).values():
+        if relation == "Source":
+            return data
     return None
 
 
@@ -152,31 +208,70 @@ def _write_xmp(pdf: pikepdf.Pdf, sha256: str, message_id: str | None) -> None:
     )
 
 
-def _embed_source(
-    pdf: pikepdf.Pdf, raw: bytes, name: str, mod_date: datetime | None
+def _embed(
+    pdf: pikepdf.Pdf,
+    files: list[tuple[str, str, bytes, Name]],
+    mod_date: datetime | None,
 ) -> None:
-    stream = pikepdf.Stream(pdf, zlib.compress(raw))
-    stream.Filter = Name.FlateDecode
-    stream.Type = Name.EmbeddedFile
-    stream.Subtype = Name("/message/rfc822")
-    params = Dictionary(Size=len(raw), CheckSum=String(hashlib.md5(raw).digest()))
-    if mod_date is not None:
-        params.ModDate = String(_pdf_date(mod_date))
-    stream.Params = params
-    spec = pdf.make_indirect(
-        Dictionary(
-            Type=Name.Filespec,
-            F=String(name),
-            UF=String(name),
-            Desc=String("Original e-mail this PDF was rendered from"),
-            AFRelationship=Name.Source,
-            EF=Dictionary(F=stream, UF=stream),
+    """Embed ``files`` as PDF/A-3 associated files, listed in the catalog.
+
+    Names are made unique (two attachments may share one), and the name tree
+    is sorted, as the PDF specification requires of its keys.
+    """
+    specs: list[tuple[str, pikepdf.Object]] = []
+    taken: set[str] = set()
+    for name, mime, data, relation in files:
+        unique = _unique(name, taken)
+        stream = pikepdf.Stream(pdf, zlib.compress(data))
+        stream.Filter = Name.FlateDecode
+        stream.Type = Name.EmbeddedFile
+        stream.Subtype = Name("/" + _mime(mime))
+        params = Dictionary(Size=len(data), CheckSum=String(hashlib.md5(data).digest()))
+        if mod_date is not None:
+            params.ModDate = String(_pdf_date(mod_date))
+        stream.Params = params
+        description = (
+            "Original e-mail this PDF was rendered from"
+            if relation == Name.Source
+            else "Attachment of the e-mail, kept as original"
         )
-    )
-    pdf.Root.AF = Array([spec])
-    pdf.Root.Names = Dictionary(
-        EmbeddedFiles=Dictionary(Names=Array([String(name), spec]))
-    )
+        specs.append(
+            (
+                unique,
+                pdf.make_indirect(
+                    Dictionary(
+                        Type=Name.Filespec,
+                        F=String(unique),
+                        UF=String(unique),
+                        Desc=String(description),
+                        AFRelationship=relation,
+                        EF=Dictionary(F=stream, UF=stream),
+                    )
+                ),
+            )
+        )
+    pdf.Root.AF = Array([spec for _, spec in specs])
+    names = Array()
+    for unique, spec in sorted(specs, key=lambda item: item[0].encode("utf-16-be")):
+        names.extend([String(unique), spec])
+    pdf.Root.Names = Dictionary(EmbeddedFiles=Dictionary(Names=names))
+
+
+def _unique(name: str, taken: set[str]) -> str:
+    stem, dot, suffix = name.rpartition(".")
+    if not dot:
+        stem, suffix = name, ""
+    candidate, counter = name, 1
+    while candidate in taken:
+        counter += 1
+        candidate = f"{stem}-{counter}.{suffix}" if suffix else f"{stem}-{counter}"
+    taken.add(candidate)
+    return candidate
+
+
+def _mime(mime: str) -> str:
+    """A MIME type usable as a PDF name; anything odd becomes octet-stream."""
+    return mime.lower() if _MIME.fullmatch(mime or "") else "application/octet-stream"
 
 
 def _pdf_date(dt: datetime) -> str:

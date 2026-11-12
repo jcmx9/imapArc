@@ -77,17 +77,16 @@ profiles:
       smaller: 20MB                  #   Optional, default null. Only messages
                                      #   smaller than this (strictly).
 
-    output: ~/Archiv/Hetzner         # REQUIRED. Target directory. eml/ is
-                                     #   always created here; pdf/ is added when
-                                     #   pdf is true. "~" is expanded. No default.
+    output: ~/Archiv/Hetzner         # REQUIRED. Target directory of the PDFs;
+                                     #   the .eml go to eml-Archiv/<name>/ beside
+                                     #   it (~/Archiv/eml-Archiv/Hetzner). "~" is
+                                     #   expanded. No default.
 
     pdf: true                        # Optional, default false. When true, also
-                                     #   render each message into its own folder
-                                     #   <basename>/: <basename>.pdf (mail +
-                                     #   attachment pages, .eml embedded) plus the
-                                     #   original attachment files. The rendered
-                                     #   .eml then moves from eml/ to
-                                     #   eml-Archiv/<output name>/ beside output.
+                                     #   render each message to one file,
+                                     #   <basename>.pdf (mail + attachment pages,
+                                     #   bookmarks, the .eml and unconvertible
+                                     #   attachments embedded).
 
     remote_images: false             # Optional, default false. Load external
                                      #   images when rendering (privacy/security

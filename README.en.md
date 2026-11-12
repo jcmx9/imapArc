@@ -19,8 +19,8 @@ Guiding principle: **imapArc preserves, it does not alter.** The full raw messag
 - **Readable `.eml` files** sharing the PDF's name; open any one in any mail client.
 - **Real browser rendering** via Chromium — even complex newsletter HTML faithfully, up to three renditions per email (reflowed, plain text, plus a scaled one-page overview for multi-page mail).
 - **No external resource loading** — tracking pixels are stripped before rendering. (Exception: `imaparc eml` loads them on purpose, see there.)
-- **One archive for everything:** once rendered, the `.eml` moves from `<profile>/eml/` to `eml-Archiv/<profile>/`; `imaparc eml` files mail from elsewhere there too, deriving the profile from its headers.
-- **Self-identifying PDFs:** every PDF records in its metadata the Message-ID and SHA-256 of the `.eml` it was rendered from; the full PDF also carries that `.eml` as an embedded source file (PDF/A-3). Copied out or renamed, it can still be traced to its mail.
+- **Flat archive:** one PDF per mail directly in `<profile>/`, the `.eml` in `eml-Archiv/<profile>/` — no subfolders. `imaparc eml` files mail from elsewhere the same way, deriving the profile from its headers.
+- **Self-identifying PDFs:** every PDF records the Message-ID and SHA-256 of its `.eml` in its metadata and carries that `.eml` as an embedded source file (PDF/A-3), plus every attachment that cannot be shown as pages (Word, Excel, ZIP …). Bookmarks lead to the mail and to each separator page. Copied out or renamed, a PDF stays complete and traceable to its mail.
 - **Protective, private archive** — files `0400` (read-only content), directories `0700` (private, yet owner-manageable), **never overwrite** (collision → `…-2`).
 
 ## Prerequisites
@@ -128,7 +128,7 @@ IMAP_PRIVAT_SSL=true
 
 `imaparc init` creates this file as a template (`0600`); enter your account there.
 
-**`profile.yaml`** — each profile defines a conversation. Under `output`, `eml/` (and `pdf/` when `pdf: true`) are always created:
+**`profile.yaml`** — each profile defines a conversation. The `.eml` go to `eml-Archiv/<output name>/` beside `output`, the PDFs (when `pdf: true`) directly into `output`:
 
 ```yaml
 profiles:
@@ -147,7 +147,7 @@ profiles:
       # until: 2026-12-31          # optional: ignore mail after this day
       # larger: 5MB                # optional: only mail bigger than (5MB, 500KB, bytes)
       # smaller: 20MB              # optional: only mail smaller than
-    output: ~/Archiv/Hetzner       # target; eml/ and (if pdf) pdf/ go here
+    output: ~/Archiv/Hetzner       # PDF target; .eml in ~/Archiv/eml-Archiv/Hetzner
     pdf: true                      # optional: also render PDFs (default false)
     # remote_images: false       # load external images when rendering (CLI can force)
     # jobs: 4                    # parallel renders (CLI --jobs overrides)
@@ -207,18 +207,17 @@ imaparc eml --name hetzner *.eml   # name segment for mail no profile matches
 imaparc eml --root ~/Archive a.eml # a different archive root
 ```
 
-The **profile is derived from the headers**: the rules in `profile.yaml` (sender and recipient addresses, domains, subject, date, attachment types) are applied to the mail; folder rules only apply to IMAP and are ignored here. A mail matching several profiles is filed into each; one matching none into `~/imapArc/00_Mails`. The PDF is written to `<profile>/pdf/<basename>/`, and once it exists the `.eml` moves to `eml-Archiv/<profile>/`:
+The **profile is derived from the headers**: the rules in `profile.yaml` (sender and recipient addresses, domains, subject, date, attachment types) are applied to the mail; folder rules only apply to IMAP and are ignored here. A mail matching several profiles is filed into each; one matching none into `~/imapArc/00_Mails`. The PDF is written as `<profile>/<basename>.pdf`, and once it exists the `.eml` moves to `eml-Archiv/<profile>/`:
 
 ```
 ~/imapArc/
-├── Hetzner/pdf/2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026/
-│   ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.pdf   # mail + attachments, .eml embedded
-│   └── rechnung.pdf                                         # attachment, original
+├── Hetzner/
+│   └── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.pdf   # mail + attachments, .eml embedded
 └── eml-Archiv/Hetzner/
     └── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.eml   # the original
 ```
 
-A directory argument takes only the `.eml` files **directly inside** it, not in subfolders. A mail already archived is recognised by its manifest and not rendered twice; a second copy of the same bytes is merged with the archived one. An interrupted run leaves at most a surplus copy, never a missing one — the next call clears it up.
+A directory argument takes only the `.eml` files **directly inside** it, not in subfolders. A mail already archived is recognised by its PDF's metadata and not rendered twice; a second copy of the same bytes is merged with the archived one. An interrupted run leaves at most a surplus copy, never a missing one — the next call clears it up.
 
 This command has nothing to do with IMAP: no server contact, no entry in the delivery database. Without a `profile.yaml` everything goes to `00_Mails`.
 
@@ -226,7 +225,7 @@ This command has nothing to do with IMAP: no server contact, no entry in the del
 
 ### Re-rendering an archive with a newer version
 
-`imaparc render` never overwrites: a mail that is already rendered is skipped — recognised by its manifest, not by its name. To rebuild older PDFs with a newer version, first set the affected PDF folders aside — but only those whose mail provably still exists as `.eml`. Two scripts in the repository do that (they need `uv` and `pdftotext`):
+`imaparc render` never overwrites: a mail that is already rendered is skipped — recognised by its PDF's metadata (in older archives by the manifest in the mail folder), not by its name. To rebuild older PDFs with a newer version, first set the affected PDFs aside — but only those whose mail provably still exists as `.eml`. Two scripts in the repository do that (they need `uv` and `pdftotext`):
 
 ```bash
 ./scripts/rerender-list.sh ~ ~/rerender --exclude ~/imapArc-alt              # read-only
@@ -235,7 +234,7 @@ bash ~/rerender/collect.sh       # every other .eml into ~/imapArc/emlinput
 bash ~/rerender/render.sh        # after looking through emlinput: rebuilds everything
 ```
 
-`rerender-list.sh` searches the given directory for PDF folders — in profile archives (`pdf/`, the `.eml` in `eml/` or `eml-Archiv/`) and in folders written by older `imaparc eml` versions (with the `.eml` inside). Every PDF folder is matched to its `.eml` through its manifest — by the hash of the raw bytes or, for manifests older than 26.8.12, by the Message-ID **and** the PDF's own text (sender, date, subject, opening of the body). Never by name. `rerender.txt` holds the folders that can safely be rebuilt; `keep.txt` the rest with a reason; `loose.txt` every other `.eml` below the directory (except in the configured profiles' inboxes). `eml-Archiv/` and `pdf-Löscharchiv/` are never searched. `rerender-apply.sh` re-checks the list before acting, asks for confirmation and moves (`--move-to`, reversible, under the path relative to `~`) or deletes (`--delete`). For folders of older `imaparc eml` versions it first takes the `.eml` out and places it beside the folder. Then `collect.sh` gathers every other `.eml` in `~/imapArc/emlinput` (same names become `-2`, byte-identical copies are merged; `emlinput.log` records where each came from) — so it can be looked through and weeded before rendering. `render.sh` then runs `imaparc render` for the profiles and `imaparc eml ~/imapArc/emlinput` for the rest: everything ends up in the archive under `~/imapArc`, the `.eml` in the `eml-Archiv`, and `emlinput` is empty afterwards. Both scripts can simply be started again after an interruption.
+`rerender-list.sh` searches the given directory for PDFs — in flat profile archives (`<profile>/*.pdf`, the `.eml` in `eml-Archiv/<profile>/`), in mail folders of older versions (`<profile>/pdf/<mail>/`) and in folders written by older `imaparc eml` versions (with the `.eml` inside). Every PDF is matched to its `.eml` — by the hash of the raw bytes from its metadata or manifest or, for manifests older than 26.8.12, by the Message-ID **and** the PDF's own text (sender, date, subject, opening of the body). Never by name. `rerender.txt` holds what can safely be rebuilt; `keep.txt` the rest with a reason; `loose.txt` every other `.eml` below the directory (except in the configured profiles' inboxes). `eml-Archiv/`, `emlinput/` and `pdf-Löscharchiv/` are never searched. `rerender-apply.sh` re-checks the list before acting, asks for confirmation and moves (`--move-to`, reversible, under the path relative to `~`) or deletes (`--delete`). For folders of older `imaparc eml` versions it first takes the `.eml` out and places it beside the folder. Then `collect.sh` gathers every other `.eml` in `~/imapArc/emlinput` (same names become `-2`, byte-identical copies are merged; `emlinput.log` records where each came from) — so it can be looked through and weeded before rendering. `render.sh` then runs `imaparc render` for the profiles and `imaparc eml ~/imapArc/emlinput` for the rest: everything ends up in the archive under `~/imapArc`, the `.eml` in the `eml-Archiv`, and `emlinput` is empty afterwards. Both scripts can simply be started again after an interruption.
 
 ## Options
 

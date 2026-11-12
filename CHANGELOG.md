@@ -5,6 +5,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Flat archive: one PDF per mail, no folders.** A mail is rendered to
+  `<output>/<basename>.pdf`; the per-mail folder with its manifest and the
+  attachment originals is gone, as are the `pdf/` and `eml/` subdirectories.
+  The PDF's own XMP metadata identifies the mail (hash + Message-ID), so
+  renders, `verify` and the rerender scripts recognise it without a manifest.
+  Folders from earlier versions are still recognised, never rewritten.
+- **`fetch` delivers straight into `eml-Archiv/<output name>/`**, and `render`
+  reads the mail from there — nothing moves after rendering. A legacy
+  `<output>/eml/` inbox is still rendered and then moved into the archive.
+- **Bookmarks** to the mail and to every separator page (renditions and
+  attachments).
+- **Attachments that cannot become pages are embedded in the PDF** as PDF/A-3
+  associated files (up to the attachment size limit); the info page says so and
+  names the embedded `.eml`, which holds every attachment in any case.
+
+### Fixed
+- **A copy skipped while its twin was still rendering is archived in the same
+  run.** `render` (legacy inbox) and `eml` file their `.eml` only after every
+  render has finished, so such copies no longer wait for a second run.
+
 ## [26.11.5] - 2026-11-12
 
 ### Changed

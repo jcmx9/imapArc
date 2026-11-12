@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Move or delete the PDF folders listed by rerender-list.sh.
+# Move or delete the PDFs (or per-mail folders) listed by rerender-list.sh.
 #
 # Usage:
 #   ./scripts/rerender-apply.sh LIST --move-to DIR [--yes]
@@ -41,12 +41,15 @@ resolve_path() {
     printf '%s%s\n' "$(cd "${path}" && pwd -P)" "${rest}"
 }
 
-# The directory an entry's archive occupies: <profile> for <profile>/pdf/<mail>,
-# and the directory holding the folder for an `imaparc eml` folder.
+# The directory an entry's archive occupies: <profile> for <profile>/pdf/<mail>
+# and for a flat <profile>/<mail>.pdf, and the directory holding the folder for
+# an `imaparc eml` folder.
 archive_of() {
     local kind="$1" folder="$2"
     if [[ "${kind}" == "profile" ]]; then
         (cd "${folder}/../.." && pwd -P)
+    elif [[ "${kind}" == "flat" ]]; then
+        (cd "$(dirname "${folder}")" && pwd -P)
     else
         (cd "${folder}/.." && pwd -P)
     fi
@@ -55,7 +58,7 @@ archive_of() {
 # Where --move-to puts a folder: its path below $HOME, or below / otherwise.
 move_destination() {
     local folder="$1" home
-    folder="$(cd "${folder}" && pwd -P)"
+    folder="$(cd "$(dirname "${folder}")" && pwd -P)/$(basename "${folder}")"
     home="$(cd "${HOME}" && pwd -P)"
     case "${folder}" in
         "${home}/"*) printf '%s/%s\n' "${target}" "${folder#"${home}/"}" ;;
@@ -148,13 +151,13 @@ main() {
             mv "${eml}" "${loose}"
             printf 'eml\t%s\n' "${loose}" >>"${applied}"
         else
-            printf 'profile\t%s\n' "${folder}" >>"${applied}"
+            printf '%s\t%s\n' "${kind}" "${folder}" >>"${applied}"
         fi
         if [[ "${mode}" == "move" ]]; then
             mkdir -p "$(dirname "${dest}")"
             mv "${folder}" "${dest}"
         else
-            rm -rf "${folder}"
+            rm -rf -- "${folder}"
         fi
         done_count=$((done_count + 1))
     done <"${verified}"

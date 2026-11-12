@@ -6,10 +6,12 @@ attachments into pages (or reports why not), the parts are merged and passed
 through Ghostscript to PDF/A-3b, and the result is written to the immutable
 archive.
 
-Every mail is stored under its own ``<basename>/`` folder holding one PDF,
-``<basename>.pdf`` — the body followed by the attachment pages, with the
-``.eml`` embedded — plus the original attachment files. (A separate body-only
-``_mailonly.pdf`` was written until 26.11.3.)
+Every mail becomes **one file**, ``<output>/<basename>.pdf``: the body followed
+by the attachment pages, with the ``.eml`` and every attachment that could not
+become pages embedded, bookmarks to each separator page, and the mail's identity
+in the XMP metadata. Until 26.11.5 each mail had a folder of its own with a
+manifest, a ``_mailonly.pdf`` (until 26.11.3) and the attachment originals;
+those folders are still recognised, never rewritten.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ import asyncio
 import contextlib
 import hashlib
 import logging
-import os
 import re
 import shutil
 import tempfile
@@ -52,16 +53,27 @@ from imaparc.pdf.pdfa import to_pdfa3b
 from imaparc.render.browser import BrowserPool
 from imaparc.render.geometry import faithful_rendition, reflowed_rendition
 from imaparc.render.pdf_render import render_html_to_pdf
-from imaparc.storage import DIR_MODE, make_dir, write_readonly
+from imaparc.storage import make_dir, write_readonly
 
 logger = logging.getLogger(__name__)
 
-# The on-disk archive format, public because `verify` reads it too: a hidden
-# manifest in each mail's subfolder holds the mail identity, so a rerun (same
-# mail) can be told apart from a basename collision (a different mail).
+# The legacy on-disk format (until 26.11.5), still read: a per-mail folder with a
+# hidden manifest holding the mail identity. Public because `verify` reads it too.
+# A PDF written since then carries the identity in its own XMP metadata.
 MANIFEST = ".imaparc-manifest"
 STAGING_PREFIX = ".staging-"
+# write_readonly()'s temporary files, left behind only by a killed process.
+TEMP_PREFIX = ".tmp-"
+LEGACY_PDF_DIR = "pdf"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f]")
+
+
+@dataclass(frozen=True, slots=True)
+class _Part:
+    """A rendered piece of the final PDF, optionally starting a bookmark."""
+
+    pdf: bytes
+    bookmark: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,46 +143,56 @@ async def render_mail(
     if skip:
         return RenderResult(basename, written=False, skipped=True)
 
-    subfolder = output_dir / basename
+    target = output_dir / f"{basename}.pdf"
+    eml_name = f"{basename}.eml"
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         async with pool.context() as ctx:
             mail_part, html_ok = await _render_mail_part(ctx, parsed, config)
-            attachment_pages, results = await _render_attachments(
-                ctx, parsed, work, config
+            attachment_parts, results, kept = await _render_attachments(
+                ctx, parsed, work, config, eml_name
             )
+        parts = mail_part + attachment_parts
 
-        # One PDF per mail: the body, followed by the attachment pages if any.
         async with gs_semaphore:
             pdfa = await asyncio.to_thread(
-                _merge_to_pdfa, mail_part + attachment_pages, work / "mail", config
+                _merge_to_pdfa, [p.pdf for p in parts], work / "mail", config
             )
-        # The PDF records the mail it shows and carries the .eml itself.
+        # The PDF records the mail it shows, carries the .eml and every
+        # attachment that did not become pages, and bookmarks its sections.
         pdfa = await asyncio.to_thread(
             provenance.stamp,
             pdfa,
             raw,
             message_id=parsed.headers.message_id,
-            eml_name=f"{basename}.eml",
+            eml_name=eml_name,
             mod_date=timestamp,
+            attachments=kept,
+            bookmarks=_bookmarks(parts),
         )
-        _store(
-            output_dir,
-            basename,
-            identity=identity,
-            pdfa=pdfa,
-            originals=[(a.filename, a.content) for a in parsed.attachments],
-        )
+        make_dir(output_dir, readonly=True)
+        target = write_readonly(target, pdfa)
 
     return RenderResult(
-        basename,
+        target.stem,
         written=True,
         html_rendered=html_ok,
         complete=all(r.outcome.ok for r in results),
-        combined_pdf=subfolder / f"{basename}.pdf",
+        combined_pdf=target,
         attachments=tuple(results),
     )
+
+
+def _bookmarks(parts: list[_Part]) -> list[tuple[str, int]]:
+    """``(title, page)`` for every part that starts a bookmark."""
+    marks: list[tuple[str, int]] = []
+    page = 0
+    for part in parts:
+        if part.bookmark:
+            marks.append((part.bookmark, page))
+        page += count_pages(part.pdf)
+    return marks
 
 
 _HASH_PREFIX = "sha256:"
@@ -214,16 +236,55 @@ def same_mail(stored: str | None, current: str) -> bool:
 
 
 def read_identity(subfolder: Path) -> str | None:
-    """Read the stored mail identity from a subfolder's manifest, if present."""
+    """Read the stored mail identity from a legacy folder's manifest, if any."""
     try:
         return (subfolder / MANIFEST).read_text(encoding="utf-8").strip()
     except OSError:
         return None
 
 
+def stored_identity(output_dir: Path, name: str) -> str | None:
+    """The identity recorded under ``name``: its PDF's XMP, or a legacy manifest."""
+    pdf = output_dir / f"{name}.pdf"
+    if pdf.is_file():
+        return provenance.identity(pdf)
+    if (output_dir / name).is_dir():
+        return read_identity(output_dir / name)
+    return None
+
+
+def is_rendered(output_dir: Path, name: str) -> bool:
+    """Whether a mail's rendition exists under ``name`` (flat PDF or legacy)."""
+    return (output_dir / f"{name}.pdf").is_file() or (
+        (output_dir / name).is_dir() or (output_dir / LEGACY_PDF_DIR / name).is_dir()
+    )
+
+
+def archive_entries(output_dir: Path) -> list[tuple[Path, str | None]]:
+    """Every rendition under ``output_dir`` with the identity it records.
+
+    Flat PDFs (``<output>/<name>.pdf``, identity from XMP) plus legacy folders
+    directly in ``output_dir`` or in its ``pdf/`` subdirectory (identity from
+    the manifest; folders without one are not imapArc's and are skipped). A PDF
+    without imapArc metadata is listed with ``None``.
+    """
+    entries: list[tuple[Path, str | None]] = []
+    for base in (output_dir, output_dir / LEGACY_PDF_DIR):
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.iterdir()):
+            if entry.name.startswith("."):
+                continue
+            if entry.is_file() and entry.suffix == ".pdf":
+                entries.append((entry, provenance.identity(entry)))
+            elif entry.is_dir() and (entry / MANIFEST).is_file():
+                entries.append((entry, read_identity(entry)))
+    return entries
+
+
 @dataclass
 class ArchiveIndex:
-    """Which mails an output directory already holds — found by manifest, not name.
+    """Which mails an output directory already holds — by identity, not name.
 
     Looking a mail up under the name it *would* get is not enough: the name
     depends on the naming scheme (which changes between versions and per
@@ -241,26 +302,20 @@ class ArchiveIndex:
     @classmethod
     def scan(cls, output_dir: Path) -> ArchiveIndex:
         index = cls()
-        if not output_dir.is_dir():
-            return index
-        for sub in sorted(output_dir.iterdir()):
-            # Dot-entries are staging folders; folders without a manifest are not
-            # imapArc's (an adhoc output directory is the user's own folder).
-            if sub.name.startswith(".") or not sub.is_dir():
-                continue
-            stored = read_identity(sub)
+        for path, stored in archive_entries(output_dir):
             if not stored:
                 continue
+            name = path.stem if path.is_file() else path.name
             lines = stored.splitlines()
             hashes = [ln for ln in lines if ln.startswith(_HASH_PREFIX)]
             for line in hashes:
-                index.by_hash.setdefault(line, sub.name)
+                index.by_hash.setdefault(line, name)
             if not hashes:
-                index.by_legacy_id.setdefault(lines[0], sub.name)
+                index.by_legacy_id.setdefault(lines[0], name)
         return index
 
     def find(self, identity: str) -> str | None:
-        """The folder already holding the mail ``identity`` describes, if any."""
+        """The name already holding the mail ``identity`` describes, if any."""
         lines = identity.splitlines()
         for line in lines:
             if line.startswith(_HASH_PREFIX) and line in self.by_hash:
@@ -278,34 +333,30 @@ def _resolve_output(
     claimed: dict[str, str] | None = None,
     existing: ArchiveIndex | None = None,
 ) -> tuple[str, bool]:
-    """Pick the per-mail folder name to write under and whether to skip.
-
-    Every mail is stored under its own ``output_dir/<basename>/`` folder, built
-    in staging and moved into place with a single atomic rename — so a folder's
-    presence means the mail is fully written; there is no half-written folder to
-    repair.
+    """Pick the name to write ``<name>.pdf`` under, and whether to skip.
 
     - A name reserved in this run **by the same mail** → skip; the sibling render
-      is already producing that folder.
+      is already producing that file.
     - A name reserved by a *different* mail → disambiguate, so the two never race
       on the output path.
-    - An existing folder whose manifest matches this mail → skip (idempotent).
-    - An existing folder belonging to a *different* mail (or with an unreadable
-      manifest) → try ``base-2``, ``base-3``, … so neither is overwritten.
+    - An existing rendition recording this mail → skip (idempotent).
+    - An existing rendition of a *different* mail (or one recording nothing) →
+      try ``base-2``, ``base-3``, … so neither is overwritten.
 
     ``claimed`` maps reserved name → mail identity. It has to carry the identity,
     not just the name: with a plain set, a second copy of one mail saw "name
-    taken" and silently took ``-2``, leaving a duplicate folder that every later
-    run then skips. Two UIDs for one message are ordinary — Gmail lists the same
+    taken" and silently took ``-2``, leaving a duplicate that every later run
+    then skips. Two UIDs for one message are ordinary — Gmail lists the same
     mail in All Mail and in a label folder, and a re-uploaded mail comes back
     with a fresh UID.
 
-    ``existing`` is checked first: a folder holding this mail under *any* name —
-    an older naming scheme, a drifted suffix — means skip. Without it, only the
-    folder under ``base`` is consulted.
+    ``existing`` is checked first: a rendition holding this mail under *any*
+    name — an older naming scheme, a drifted suffix — means skip.
 
-    A returned non-skip basename is reserved before returning — with no ``await``
+    A returned non-skip name is reserved before returning — with no ``await``
     between here and the write, that reservation is atomic within the event loop.
+    The file itself is written atomically (temp file, fsync, rename), so its
+    presence means the mail is fully rendered.
     """
     if existing is not None and (found := existing.find(identity)) is not None:
         return found, True
@@ -314,15 +365,16 @@ def _resolve_output(
     candidate = base
     counter = 1
     while True:
-        subfolder = output_dir / candidate
         if candidate in claimed:
             if same_mail(claimed[candidate], identity):
                 return candidate, True  # same mail, a sibling render has it
             # A different mail holds the name — disambiguate.
-        elif subfolder.exists():
-            if same_mail(read_identity(subfolder), identity):
+        elif (output_dir / f"{candidate}.pdf").exists() or (
+            output_dir / candidate
+        ).exists():
+            if same_mail(stored_identity(output_dir, candidate), identity):
                 return candidate, True
-            # A different mail (or corrupt folder) owns this name — disambiguate.
+            # A different mail (or a foreign file) owns this name.
         else:
             claimed[candidate] = identity
             return candidate, False
@@ -331,18 +383,21 @@ def _resolve_output(
 
 
 def sweep_staging(output_dir: Path) -> None:
-    """Remove any ``.staging-*`` folders left by a previously interrupted run.
+    """Remove temp files and staging folders left by an interrupted run.
 
-    A per-mail folder only appears via one atomic rename, so an interruption can
-    never leave a half-written *final* folder — only a leftover staging folder,
-    which is harmless (the idempotency check ignores it) but should not accrue.
-    Called once at the start of a profile's render, before any concurrent mail
-    render creates its own staging folder, so nothing in flight is touched.
+    A PDF only appears via one atomic rename, so an interruption can never leave
+    a half-written *final* file — only a ``.tmp-*`` file (or, from versions
+    before 26.11.6, a ``.staging-*`` folder), harmless but not to accrue.
+    Called once per output directory before any render starts, so nothing in
+    flight is touched.
     """
     if not output_dir.exists():
         return
     for staging in output_dir.glob(f"{STAGING_PREFIX}*"):
         _remove_tree(staging)
+    for temp in output_dir.glob(f"{TEMP_PREFIX}*"):
+        if temp.is_file():
+            temp.unlink(missing_ok=True)
 
 
 def _remove_tree(path: Path) -> None:
@@ -383,9 +438,12 @@ async def _render_page(ctx: BrowserContext, html: str, config: RunConfig) -> byt
 
 async def _render_mail_part(
     ctx: BrowserContext, parsed: ParsedMail, config: RunConfig
-) -> tuple[list[bytes], bool]:
-    """Render the shared mail part: faithful + reflowed body, then text."""
-    parts: list[bytes] = []
+) -> tuple[list[_Part], bool]:
+    """Render the mail body: overview + reflowed body, then the text version.
+
+    The first part is bookmarked "E-Mail", each section separator by its title.
+    """
+    parts: list[_Part] = []
     date_str = format_date_human(parsed.headers.date)
     html_ok = True
 
@@ -417,19 +475,17 @@ async def _render_mail_part(
             # separator — the reflowed then leads with the header).
             if count_pages(reflowed) > 1:
                 parts.append(
-                    await render_html_to_pdf(
-                        ctx,
-                        body,
-                        faithful_rendition(),
-                        allow_remote=config.allow_remote,
+                    _Part(
+                        await render_html_to_pdf(
+                            ctx,
+                            body,
+                            faithful_rendition(),
+                            allow_remote=config.allow_remote,
+                        )
                     )
                 )
-                parts.append(
-                    await _render_page(
-                        ctx, render_section_separator("Umbrochene Fassung"), config
-                    )
-                )
-            parts.append(reflowed)
+                parts.append(await _separator(ctx, "Umbrochene Fassung", config))
+            parts.append(_Part(reflowed))
         except RenderError:
             logger.warning("HTML rendering failed; falling back to text only")
             parts.clear()
@@ -440,18 +496,16 @@ async def _render_mail_part(
     text_body = parsed.text_body or html_to_text(parsed.html_body or "")
     if text_body:
         if parts:
-            parts.append(
-                await _render_page(
-                    ctx, render_section_separator("Nur-Text-Version"), config
-                )
-            )
+            parts.append(await _separator(ctx, "Nur-Text-Version", config))
         parts.append(
-            await _render_page(
-                ctx,
-                render_text(
-                    parsed.headers, text_body, show_bcc=True, date_str=date_str
-                ),
-                config,
+            _Part(
+                await _render_page(
+                    ctx,
+                    render_text(
+                        parsed.headers, text_body, show_bcc=True, date_str=date_str
+                    ),
+                    config,
+                )
             )
         )
 
@@ -462,21 +516,40 @@ async def _render_mail_part(
             show_bcc=True,
             date_str=date_str,
         )
-        parts.append(await _render_page(ctx, header_only, config))
+        parts.append(_Part(await _render_page(ctx, header_only, config)))
 
+    parts[0] = _Part(parts[0].pdf, "E-Mail")
     return parts, html_ok
 
 
+async def _separator(ctx: BrowserContext, title: str, config: RunConfig) -> _Part:
+    """A section separator page, bookmarked with its own title."""
+    return _Part(
+        await _render_page(ctx, render_section_separator(title), config), title
+    )
+
+
 async def _render_attachments(
-    ctx: BrowserContext, parsed: ParsedMail, work: Path, config: RunConfig
-) -> tuple[list[bytes], list[AttachmentResult]]:
-    """Convert attachments to pages; return the pages and per-attachment results."""
+    ctx: BrowserContext,
+    parsed: ParsedMail,
+    work: Path,
+    config: RunConfig,
+    eml_name: str,
+) -> tuple[list[_Part], list[AttachmentResult], list[tuple[str, str, bytes]]]:
+    """Convert attachments to pages.
+
+    Returns the parts (each attachment's separator or info page bookmarked
+    "Anhang N: name"), the per-attachment results, and the attachments that did
+    not become pages as ``(name, MIME type, content)`` — embedded into the PDF
+    unless larger than the attachment size limit (the ``.eml`` holds them anyway).
+    """
 
     async def render_text_cb(filename: str, text: str) -> bytes:
         return await _render_page(ctx, render_text_attachment(filename, text), config)
 
-    pages: list[bytes] = []
+    parts: list[_Part] = []
     results: list[AttachmentResult] = []
+    kept: list[tuple[str, str, bytes]] = []
     for index, att in enumerate(parsed.attachments, start=1):
         outcome = await convert_attachment(
             att,
@@ -488,15 +561,33 @@ async def _render_attachments(
         )
         results.append(AttachmentResult(att.filename, outcome))
         size = format_file_size(att.size)
+        mark = f"Anhang {index}: {att.filename}"
         if outcome.ok and outcome.pdf_bytes is not None:
             separator = render_separator(index, att.filename, outcome.page_count, size)
-            pages.append(await _render_page(ctx, separator, config))
-            pages.append(outcome.pdf_bytes)
+            parts.append(_Part(await _render_page(ctx, separator, config), mark))
+            parts.append(_Part(outcome.pdf_bytes))
         else:
+            embedded = att.size <= config.max_attachment_bytes
+            if embedded:
+                kept.append(
+                    (
+                        _safe_attachment_name(att.filename),
+                        effective_mime(att),
+                        att.content,
+                    )
+                )
             reason = outcome.reason.message if outcome.reason else ""
-            info = render_info(index, att.filename, effective_mime(att), size, reason)
-            pages.append(await _render_page(ctx, info, config))
-    return pages, results
+            info = render_info(
+                index,
+                att.filename,
+                effective_mime(att),
+                size,
+                reason,
+                embedded=embedded,
+                eml_name=eml_name,
+            )
+            parts.append(_Part(await _render_page(ctx, info, config), mark))
+    return parts, results, kept
 
 
 def _merge_to_pdfa(pages: list[bytes], stem: Path, config: RunConfig) -> bytes:
@@ -509,36 +600,3 @@ def _merge_to_pdfa(pages: list[bytes], stem: Path, config: RunConfig) -> bytes:
         src, dst, gs=config.tools.gs, icc=config.icc_profile, work_dir=stem.parent
     )
     return dst.read_bytes()
-
-
-def _store(
-    output_dir: Path,
-    basename: str,
-    *,
-    identity: str,
-    pdfa: bytes,
-    originals: list[tuple[str, bytes]],
-) -> None:
-    """Write one mail's folder atomically with archive permissions.
-
-    Every mail gets its own ``<basename>/`` folder holding ``<basename>.pdf``
-    (body + attachment pages) and the original attachment files. There is never
-    a loose PDF at the output root.
-
-    The folder is built under a staging name and moved into place with a single
-    atomic rename, so its presence means the mail is complete — nothing is
-    written after the rename. The PDF is written before the originals, so an
-    attachment that happens to share its name is disambiguated
-    rather than clobbering them. Files are 0400, the folder 0700 (via
-    write_readonly + disambiguate); a ``.imaparc-manifest`` records the mail
-    identity so a later run tells a re-render from a distinct basename collision.
-    """
-    staging = output_dir / f"{STAGING_PREFIX}{basename}"
-    _remove_tree(staging)
-    make_dir(staging)
-    write_readonly(staging / MANIFEST, identity.encode("utf-8"))
-    write_readonly(staging / f"{basename}.pdf", pdfa)
-    for name, content in originals:
-        write_readonly(staging / _safe_attachment_name(name), content)
-    os.chmod(staging, DIR_MODE)
-    os.rename(staging, output_dir / basename)

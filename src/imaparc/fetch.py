@@ -376,7 +376,9 @@ def _fetch_folder(
                     )
                 )
                 continue
-            eml_dir = profile.output / "eml"
+            # Delivered straight into the eml-Archiv: render reads it from there
+            # and it never moves again (before 26.11.6: the profile's eml/).
+            eml_dir = archived_eml_dir(profile.output)
             if not already:
                 if raw is None:
                     raw = conn.fetch_body(folder, message.uid)
@@ -423,10 +425,10 @@ def _fetch_folder(
                 # if the archive was moved away or the output path changed, a
                 # delete/move here would destroy the only copy. "imapArc
                 # preserves" holds even for server-side deletion.
-                # A rendered mail's .eml has moved on to the eml-Archiv under
-                # the same file name; that counts as the local copy too.
-                archived = archived_eml_dir(profile.output) / eml_path.name
-                if eml_path.exists() or archived.exists():
+                # A mail delivered before 26.11.6 may still sit in the legacy
+                # eml/ inbox under the same file name; that counts too.
+                legacy = profile.output / "eml" / eml_path.name
+                if eml_path.exists() or legacy.exists():
                     # Best-effort: the archive is durable, so a server failure
                     # warns and is counted, never crashes the folder.
                     _post_fetch(conn, folder, message.uid, profile, report)

@@ -3,8 +3,8 @@
 This is the ``eml`` command's engine. A mail — dragged out of a mail client, or
 lying anywhere on disk — is filed exactly as ``fetch`` + ``render`` would file
 it: its profile is derived from its **headers** with the rules in
-``profile.yaml``, the PDF goes to ``<profile output>/pdf/<basename>/``, and once
-that folder exists the ``.eml`` moves into ``eml-Archiv/<output name>/``. A mail
+``profile.yaml``, the PDF goes to ``<profile output>/<basename>.pdf``, and once
+it exists the ``.eml`` moves into ``eml-Archiv/<output name>/``. A mail
 matching several profiles is filed into each of them; one matching none goes to
 ``<root>/00_Mails/``.
 
@@ -24,7 +24,13 @@ from imaparc.config import RunConfig, ToolPaths
 from imaparc.console import make_progress
 from imaparc.exceptions import ImapArcError, SourceError
 from imaparc.mail.parser import parse_mail
-from imaparc.pipeline import ArchiveIndex, RenderResult, render_mail, sweep_staging
+from imaparc.pipeline import (
+    ArchiveIndex,
+    RenderResult,
+    is_rendered,
+    render_mail,
+    sweep_staging,
+)
 from imaparc.profiles import Profile, archived_eml_dir, matching_profiles
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
@@ -117,9 +123,10 @@ async def run_adhoc(
 ) -> RunReport:
     """Render ``.eml`` files into the profile archive and archive each one.
 
-    The ``.eml`` is only moved once the PDF folder exists for **every** profile
-    it was filed into (rendered now, or recognised as rendered by its manifest);
-    a mail that failed anywhere stays where it was, so a rerun picks it up.
+    The ``.eml`` is only moved — after all renders have finished — once a PDF
+    exists for **every** profile it was filed into (rendered now, or recognised
+    as rendered); a mail that failed anywhere stays where it was, so a rerun
+    picks it up.
 
     **Remote images are always loaded here**, unlike ``render`` where they are
     opt-in per profile. This command renders a mail the user picked out by hand
@@ -147,11 +154,12 @@ async def run_adhoc(
 
     fallback = fallback_profile(root, name)
     targets: dict[Path, _Target] = {}
+    pending: list[tuple[Path, list[tuple[Path, str]]]] = []
 
     def target(profile: Profile) -> _Target:
         # Created on first use, synchronously (no await), so concurrent mails
         # filed into the same profile share one reservation map and index.
-        output = profile.output / "pdf"
+        output = profile.output
         if output not in targets:
             make_dir(output, readonly=True)
             sweep_staging(output)
@@ -217,18 +225,7 @@ async def run_adhoc(
                             else:
                                 logger.info("%s → %s", profile.name, eml.name)
                                 logger.debug("  %s", result.basename)
-                        # After every folder's atomic rename, never before: the
-                        # mail is only archived once all its PDFs are complete.
-                        if all((t.output / r.basename).is_dir() for t, r in done):
-                            archived = file_away(
-                                eml,
-                                raw,
-                                [
-                                    (archived_eml_dir(t.profile.output), r.basename)
-                                    for t, r in done
-                                ],
-                            )
-                            logger.debug("archived %s → %s", eml.name, archived)
+                        pending.append((eml, [(t.output, r.basename) for t, r in done]))
                     except (ImapArcError, OSError) as exc:
                         # One unreadable mail must not abort the whole run.
                         logger.error("Failed to render %s: %s", eml, exc)
@@ -239,6 +236,22 @@ async def run_adhoc(
             results = await asyncio.gather(
                 *(process(eml) for eml in files), return_exceptions=True
             )
+        # Archive only now, with every render finished: a copy skipped because
+        # its twin was still being written then finds that PDF in place too.
+        # And never before *every* target's PDF exists.
+        for eml, names in pending:
+            if not all(is_rendered(out, name) for out, name in names):
+                continue
+            try:
+                archived = file_away(
+                    eml,
+                    eml.read_bytes(),
+                    [(archived_eml_dir(out), name) for out, name in names],
+                )
+            except OSError as exc:
+                logger.error("Could not archive %s: %s", eml, exc)
+            else:
+                logger.debug("archived %s → %s", eml.name, archived)
         for outcome in results:
             if isinstance(outcome, list):
                 for result in outcome:

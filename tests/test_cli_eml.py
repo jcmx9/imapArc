@@ -64,10 +64,10 @@ def test_renders_into_the_archive_and_archives_the_eml(tmp_path: Path) -> None:
     result = runner.invoke(app, ["eml", *_isolated(tmp_path), str(mail)])
 
     assert result.exit_code == 0, result.output
-    [folder] = (tmp_path / "arc" / "00_Mails" / "pdf").iterdir()
-    assert (folder / f"{folder.name}.pdf").is_file()
+    [pdf] = (tmp_path / "arc" / "00_Mails").iterdir()
+    assert pdf.suffix == ".pdf"
     archive = tmp_path / "arc" / "eml-Archiv" / "00_Mails"
-    assert (archive / f"{folder.name}.eml").is_file()
+    assert (archive / f"{pdf.stem}.eml").is_file()
     assert not mail.exists()
 
 
@@ -94,8 +94,8 @@ def test_profiles_from_the_given_file_pick_the_target(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    [folder] = (tmp_path / "arc" / "Amt" / "pdf").iterdir()
-    assert "_Amt_" in folder.name
+    [pdf] = (tmp_path / "arc" / "Amt").iterdir()
+    assert "_Amt_" in pdf.name
 
 
 def test_broken_profiles_file_exits_with_an_error(tmp_path: Path) -> None:

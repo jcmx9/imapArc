@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import shutil
 import stat
@@ -15,7 +16,8 @@ import pytest
 from imaparc.config import RunConfig, ToolPaths
 from imaparc.mail.parser import parse_mail
 from imaparc.pdf import provenance
-from imaparc.pipeline import ArchiveIndex, _resolve_output, _store, render_mail
+from imaparc.pdf.validate import run_verapdf
+from imaparc.pipeline import ArchiveIndex, _resolve_output, is_rendered, render_mail
 from imaparc.render.browser import BrowserPool
 from tests.mail_builder import build_mail
 
@@ -43,126 +45,68 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-# --- _store (no browser) ----------------------------------------------------
+# --- archive identity and _resolve_output (no browser) -----------------------
 
 
-def test_store_writes_one_pdf_and_the_originals(tmp_path: Path) -> None:
-    _store(
-        tmp_path,
-        "m-1",
-        identity="id-1",
-        pdfa=b"FULL",
-        originals=[("a.pdf", b"x"), ("a.pdf", b"y")],
-    )
-    sub = tmp_path / "m-1"
-    # No loose PDF at the root — the mail's PDF lives only inside its folder.
-    assert not (tmp_path / "m-1.pdf").exists()
-    assert (sub / "m-1.pdf").read_bytes() == b"FULL"
-    # Two same-named attachments: the second is disambiguated, neither lost.
-    assert (sub / "a.pdf").read_bytes() == b"x"
-    assert (sub / "a-2.pdf").read_bytes() == b"y"
-    assert sorted(p.name for p in sub.iterdir()) == [
-        ".imaparc-manifest",
-        "a-2.pdf",
-        "a.pdf",
-        "m-1.pdf",
-    ]
+def _flat(output: Path, name: str, raw: bytes, message_id: str | None) -> str:
+    """A rendered mail as written since 26.11.6; returns its identity."""
+    output.mkdir(parents=True, exist_ok=True)
+    stamped = provenance.stamp(_pdf(), raw, message_id=message_id)
+    (output / f"{name}.pdf").write_bytes(stamped)
+    lines = [message_id] if message_id else []
+    return "\n".join([*lines, f"sha256:{hashlib.sha256(raw).hexdigest()}"])
 
 
-def test_store_sets_archive_permissions(tmp_path: Path) -> None:
-    _store(
-        tmp_path,
-        "m-1",
-        identity="id-1",
-        pdfa=b"F",
-        originals=[("a.bin", b"x")],
-    )
-    assert _mode(tmp_path / "m-1") == 0o700
-    assert _mode(tmp_path / "m-1" / "m-1.pdf") == 0o400
-    assert _mode(tmp_path / "m-1" / "a.bin") == 0o400
+def _legacy(base: Path, name: str, identity: str) -> None:
+    """A per-mail folder as written before 26.11.6."""
+    folder = base / name
+    folder.mkdir(parents=True)
+    (folder / ".imaparc-manifest").write_text(identity, encoding="utf-8")
+    (folder / f"{name}.pdf").write_bytes(_pdf())
 
 
-def test_store_reserved_pdf_name_wins_over_attachments(tmp_path: Path) -> None:
-    # An attachment literally named like the mail's PDF must not clobber it.
-    _store(
-        tmp_path,
-        "m-1",
-        identity="id-1",
-        pdfa=b"FULL",
-        originals=[("m-1.pdf", b"ATTACH")],
-    )
-    sub = tmp_path / "m-1"
-    assert (sub / "m-1.pdf").read_bytes() == b"FULL"
-    assert (sub / "m-1-2.pdf").read_bytes() == b"ATTACH"
+def test_resolve_output_skips_a_rendered_same_mail(tmp_path: Path) -> None:
+    identity = _flat(tmp_path, "m", b"RAW", "<a@x>")
+    assert _resolve_output(tmp_path, "m", identity) == ("m", True)
 
 
-def test_store_strips_path_traversal(tmp_path: Path) -> None:
-    _store(
-        tmp_path,
-        "m-1",
-        identity="id-1",
-        pdfa=b"F",
-        originals=[("../../evil.sh", b"x")],
-    )
-    # The name is reduced to its basename; nothing escapes the subfolder.
-    assert (tmp_path / "m-1" / "evil.sh").exists()
-    assert not (tmp_path.parent / "evil.sh").exists()
+def test_resolve_output_disambiguates_different_mail(tmp_path: Path) -> None:
+    _flat(tmp_path, "m", b"RAW", "<a@x>")
+    other = f"<b@x>\nsha256:{hashlib.sha256(b'OTHER').hexdigest()}"
+    assert _resolve_output(tmp_path, "m", other) == ("m-2", False)
 
 
-def test_store_no_staging_left_behind(tmp_path: Path) -> None:
-    _store(
-        tmp_path,
-        "m-1",
-        identity="id-1",
-        pdfa=b"M",
-        originals=[],
-    )
-    assert not any(p.name.startswith(".staging") for p in tmp_path.iterdir())
-
-
-# --- _resolve_output (no browser) -------------------------------------------
-
-
-def test_resolve_output_skips_fully_rendered_same_mail(tmp_path: Path) -> None:
-    _store(
-        tmp_path,
-        "m",
-        identity="id-a",
-        pdfa=b"M",
-        originals=[],
-    )
-    name, skip = _resolve_output(tmp_path, "m", "id-a")
-    assert (name, skip) == ("m", True)
-
-
-def _archived(tmp_path: Path, name: str, identity: str) -> None:
-    _store(
-        tmp_path,
-        name,
-        identity=identity,
-        pdfa=b"M",
-        originals=[],
-    )
+def test_a_foreign_pdf_under_the_name_is_never_overwritten(tmp_path: Path) -> None:
+    (tmp_path / "m.pdf").write_bytes(_pdf())  # records no mail
+    assert _resolve_output(tmp_path, "m", "<a@x>\nsha256:aaa") == ("m-2", False)
 
 
 def test_resolve_output_finds_the_same_mail_under_another_name(
     tmp_path: Path,
 ) -> None:
     """A changed naming scheme must not render the whole archive a second time."""
-    _archived(tmp_path, "old_name.", "<a@x>\nsha256:aaa")
+    identity = _flat(tmp_path, "old_name", b"RAW", "<a@x>")
 
-    name, skip = _resolve_output(
-        tmp_path,
-        "new_name",
-        "<a@x>\nsha256:aaa",
-        existing=ArchiveIndex.scan(tmp_path),
+    found = _resolve_output(
+        tmp_path, "new_name", identity, existing=ArchiveIndex.scan(tmp_path)
     )
 
-    assert (name, skip) == ("old_name.", True)
+    assert found == ("old_name", True)
+
+
+@pytest.mark.parametrize("base", [".", "pdf"])
+def test_legacy_folders_are_still_recognised(tmp_path: Path, base: str) -> None:
+    """Folders from before 26.11.6, beside the PDFs or in the old pdf/ subdir."""
+    _legacy(tmp_path / base, "legacy", "<a@x>\nsha256:aaa")
+
+    index = ArchiveIndex.scan(tmp_path)
+
+    assert index.find("<a@x>\nsha256:aaa") == "legacy"
+    assert is_rendered(tmp_path, "legacy")
 
 
 def test_resolve_output_finds_a_legacy_folder_by_message_id(tmp_path: Path) -> None:
-    _archived(tmp_path, "legacy", "<a@x>")  # manifest from before 26.8.12
+    _legacy(tmp_path, "legacy", "<a@x>")  # manifest from before 26.8.12
 
     name, skip = _resolve_output(
         tmp_path, "new_name", "<a@x>\nsha256:aaa", existing=ArchiveIndex.scan(tmp_path)
@@ -175,7 +119,7 @@ def test_resolve_output_does_not_trust_a_shared_message_id_over_the_hash(
     tmp_path: Path,
 ) -> None:
     # Same sender-chosen Message-ID, different bytes: a different mail.
-    _archived(tmp_path, "other", "<1@localhost>\nsha256:bbb")
+    _flat(tmp_path, "other", b"OTHER", "<1@localhost>")
 
     name, skip = _resolve_output(
         tmp_path,
@@ -187,14 +131,16 @@ def test_resolve_output_does_not_trust_a_shared_message_id_over_the_hash(
     assert (name, skip) == ("new_name", False)
 
 
-def test_archive_index_ignores_staging_and_foreign_folders(tmp_path: Path) -> None:
+def test_archive_index_ignores_staging_and_foreign_entries(tmp_path: Path) -> None:
     (tmp_path / ".staging-x").mkdir()
     (tmp_path / ".staging-x" / ".imaparc-manifest").write_text("<a@x>\nsha256:aaa")
     (tmp_path / "my own folder").mkdir()  # a user's folder, no manifest
+    (tmp_path / "scan.pdf").write_bytes(_pdf())  # a PDF recording no mail
 
     index = ArchiveIndex.scan(tmp_path)
 
     assert index.find("<a@x>\nsha256:aaa") is None
+    assert index.by_hash == {}
 
 
 def test_resolve_output_reserves_basename_for_concurrent_renders(
@@ -213,17 +159,16 @@ def test_resolve_output_reserves_basename_for_concurrent_renders(
     assert claimed == {"m": "id-a", "m-2": "id-b"}
 
 
-def test_resolve_output_disambiguates_different_mail(tmp_path: Path) -> None:
-    _store(
-        tmp_path,
-        "m",
-        identity="id-a",
-        pdfa=b"M",
-        originals=[],
-    )
-    # A distinct mail that would collide on the basename gets its own slot.
-    name, skip = _resolve_output(tmp_path, "m", "id-b")
-    assert (name, skip) == ("m-2", False)
+def test_sweep_removes_temp_files_and_staging_folders(tmp_path: Path) -> None:
+    from imaparc.pipeline import sweep_staging
+
+    (tmp_path / ".tmp-abc").write_bytes(b"half")
+    (tmp_path / ".staging-x").mkdir()
+    (tmp_path / "keep.pdf").write_bytes(b"x")
+
+    sweep_staging(tmp_path)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["keep.pdf"]
 
 
 # --- end-to-end (gated) -----------------------------------------------------
@@ -267,23 +212,30 @@ async def test_render_mail_end_to_end(tmp_path: Path) -> None:
     assert outcomes["doc.pdf"] is True
     assert outcomes["report.docx"] is False
 
-    # Output tree: a per-mail folder with the one PDF (<basename>.pdf) and both
-    # originals. Nothing loose at the root, no _mailonly.pdf any more.
-    sub = tmp_path / result.basename
-    assert not (tmp_path / f"{result.basename}.pdf").exists()
-    assert result.combined_pdf == sub / f"{result.basename}.pdf"
-    assert result.combined_pdf is not None and result.combined_pdf.exists()
-    assert not (sub / f"{result.basename}_mailonly.pdf").exists()
-    assert (sub / "doc.pdf").exists()
-    assert (sub / "report.docx").read_bytes() == b"PK\x03\x04 not really a docx"
+    # Output: one file, <basename>.pdf, directly in the output directory.
+    pdf = tmp_path / f"{result.basename}.pdf"
+    assert result.combined_pdf == pdf
+    assert sorted(p.name for p in tmp_path.iterdir()) == [pdf.name]
+    data = pdf.read_bytes()
 
-    # The PDF names its mail by the manifest's hash and carries the .eml.
-    manifest_hash = (sub / ".imaparc-manifest").read_text().splitlines()[1]
-    recorded = provenance.read(result.combined_pdf.read_bytes())
+    # The PDF names its mail, carries the .eml and the attachment that did not
+    # become pages (the PDF attachment did, so it is not embedded again).
+    recorded = provenance.read(data)
     assert recorded is not None
-    assert f"sha256:{recorded.sha256}" == manifest_hash
+    assert recorded.sha256 == hashlib.sha256(raw).hexdigest()
     assert recorded.message_id == parsed.headers.message_id
-    assert provenance.embedded_source(result.combined_pdf.read_bytes()) == raw
+    files = provenance.embedded_files(data)
+    assert files[f"{result.basename}.eml"] == ("Source", raw)
+    assert files["report.docx"] == ("Data", b"PK\x03\x04 not really a docx")
+    assert "doc.pdf" not in files
+
+    # Bookmarks: the mail, then one per attachment, on their pages.
+    with pikepdf.open(pdf) as doc, doc.open_outline() as outline:
+        titles = [item.title for item in outline.root]
+    assert titles[0] == "E-Mail"
+    assert titles[-2:] == ["Anhang 1: doc.pdf", "Anhang 2: report.docx"]
+
+    assert run_verapdf(tools.verapdf, pdf).compliant
 
 
 @pytest.mark.requires_chromium
@@ -301,14 +253,8 @@ async def test_render_mail_is_idempotent(tmp_path: Path) -> None:
         )
     assert first.written and not first.skipped
     assert second.skipped and not second.written
-    # No attachments → a folder holding only <basename>.pdf.
-    sub = tmp_path / first.basename
-    assert first.combined_pdf == sub / f"{first.basename}.pdf"
-    assert not (sub / f"{first.basename}_mailonly.pdf").exists()
-    assert sorted(p.name for p in sub.iterdir()) == [
-        ".imaparc-manifest",
-        f"{first.basename}.pdf",
-    ]
+    assert second.basename == first.basename
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{first.basename}.pdf"]
 
 
 def test_sweep_staging_removes_leftovers_only(tmp_path: Path) -> None:

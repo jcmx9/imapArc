@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+import pikepdf
+
+from imaparc.pdf import provenance
 from imaparc.profiles import Profile
 from imaparc.verify import Finding, Severity, verify_profile
 
@@ -89,13 +93,68 @@ def test_finds_a_folder_without_its_pdf(tmp_path: Path) -> None:
     assert next(f for f in findings if f.kind == "incomplete").severity is Severity.FAIL
 
 
-def test_finds_a_folder_without_a_manifest(tmp_path: Path) -> None:
-    folder = tmp_path / "pdf" / "2026-08-01_10-00-00_p_Mail"
-    folder.mkdir(parents=True)
-    (folder / "2026-08-01_10-00-00_p_Mail.pdf").write_bytes(b"%PDF-1.4")
+def test_finds_a_pdf_that_records_no_mail(tmp_path: Path) -> None:
     _eml(tmp_path, "2026-08-01_10-00-00_p_Mail")
+    (tmp_path / "2026-08-01_10-00-00_p_Mail.pdf").write_bytes(_blank_pdf())
 
-    assert "no-manifest" in _kinds(verify_profile(_profile(tmp_path)))
+    assert "no-identity" in _kinds(verify_profile(_profile(tmp_path)))
+
+
+# --- the flat layout (since 26.11.6) -----------------------------------------
+
+
+def _blank_pdf() -> bytes:
+    doc = pikepdf.Pdf.new()
+    doc.add_blank_page()
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+def _flat(output: Path, name: str, raw: bytes) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    stamped = provenance.stamp(_blank_pdf(), raw, message_id=None)
+    (output / f"{name}.pdf").write_bytes(stamped)
+
+
+def _archived(output: Path, name: str, raw: bytes) -> None:
+    archive = output.parent / "eml-Archiv" / output.name
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / f"{name}.eml").write_bytes(raw)
+
+
+def test_a_clean_flat_archive_reports_nothing(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "2026-08-01_10-00-00_p_Mail", b"Subject: x\r\n\r\nbody")
+    _flat(output, "2026-08-01_10-00-00_p_Mail", b"Subject: x\r\n\r\nbody")
+
+    assert verify_profile(_profile(output)) == []
+
+
+def test_a_flat_pdf_is_matched_by_hash_not_name(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "2026-08-01_10-00-00_p_Mail-2", b"RAW")
+    _flat(output, "2026-08-01_10-00-00_p_Mail-3", b"RAW")
+
+    assert verify_profile(_profile(output)) == []
+
+
+def test_two_flat_pdfs_of_one_mail_are_duplicates(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "a", b"RAW")
+    _flat(output, "a", b"RAW")
+    _flat(output, "a-2", b"RAW")
+
+    assert _kinds(verify_profile(_profile(output))) == {"duplicate"}
+
+
+def test_a_leftover_temp_file_is_reported(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "a", b"RAW")
+    _flat(output, "a", b"RAW")
+    (output / ".tmp-x1y2").write_bytes(b"half")
+
+    assert _kinds(verify_profile(_profile(output))) == {"staging"}
 
 
 def test_finds_leftover_staging_directories(tmp_path: Path) -> None:

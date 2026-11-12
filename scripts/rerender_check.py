@@ -7,7 +7,10 @@ Called by ``rerender-list.sh`` and ``rerender-apply.sh``; not part of the
 - **profile** archives — ``<profile>/pdf/<mail>/`` with the ``.eml`` in
   ``<profile>/eml/`` or, once rendered, ``eml-Archiv/<profile>/`` beside it;
 - **eml** folders — ``<dir>/<mail>/`` holding its own ``.eml`` (``imaparc
-  eml`` before 26.11.4).
+  eml`` before 26.11.4);
+- **flat** archives (since 26.11.6) — ``<profile>/<mail>.pdf`` with the
+  ``.eml`` in ``eml-Archiv/<profile>/``; the PDF itself records the mail's hash
+  in its XMP metadata, so a flat PDF is proven by **hash** only.
 
 A folder qualifies only when its mail provably still exists as ``.eml`` — in
 one of the profile's two ``.eml`` directories, or inside the folder itself:
@@ -58,23 +61,25 @@ from imaparc.exceptions import ImapArcError, ParseError
 from imaparc.html.to_text import html_to_text
 from imaparc.mail.models import ParsedMail
 from imaparc.mail.parser import parse_mail
+from imaparc.pdf import provenance
 from imaparc.profiles import EML_ARCHIVE, archived_eml_dir, load_profiles
 from imaparc.sources.deliver import file_away
 
 MANIFEST = ".imaparc-manifest"
 HASH_PREFIX = "sha256:"
 DEFAULT_CONFIG = Path.home() / ".config" / "imaparc" / "profile.yaml"
-# Where collect.sh gathers every loose .eml before `imaparc eml` files it away.
-DEFAULT_INBOX = Path.home() / "imapArc" / "emlinput"
 
 # Never searched: macOS caches, the trash, the eml-Archiv (rendered mail, not
 # loose) and the pdf-Löscharchiv (folders already set aside — finding them again
 # would offer them a second time). Dot-directories are skipped too.
 PDF_SET_ASIDE = "pdf-Löscharchiv"
+INBOX_NAME = "emlinput"
 _SKIP_NAMES = frozenset(
     unicodedata.normalize("NFC", n)
-    for n in ("Library", ".Trash", EML_ARCHIVE, PDF_SET_ASIDE)
+    for n in ("Library", ".Trash", EML_ARCHIVE, PDF_SET_ASIDE, INBOX_NAME)
 )
+# Where collect.sh gathers every loose .eml before `imaparc eml` files it away.
+DEFAULT_INBOX = Path.home() / "imapArc" / INBOX_NAME
 
 # Pages of the PDF searched for the mail's text. The header block and the start
 # of the body sit on the first pages of every rendition.
@@ -232,6 +237,15 @@ def verdict(folder: Path, mails: _Mails) -> tuple[str, Path | None]:
     return "content-mismatch", None
 
 
+def verdict_pdf(pdf: Path, mails: _Mails) -> tuple[str, Path | None]:
+    """Whether a flat ``<mail>.pdf`` may go: its recorded hash names a ``.eml``."""
+    recorded = provenance.read(pdf)
+    if recorded is None:
+        return "no-identity", None
+    found = mails.by_hash.get(recorded.sha256)
+    return ("hash", found) if found else ("no-eml", None)
+
+
 def _kind(folder: Path) -> str:
     """``profile`` for ``<profile>/pdf/<mail>/``, else ``eml`` (an adhoc folder)."""
     parent = folder.parent
@@ -252,6 +266,8 @@ class Archive:
     configured: bool
 
     def folders(self) -> list[Path]:
+        if self.kind == "flat":
+            return sorted(p for p in self.path.glob("*.pdf") if p.is_file())
         base = self.path / "pdf" if self.kind == "profile" else self.path
         return sorted(
             p
@@ -292,6 +308,7 @@ def discover(
     configured = _configured_outputs(config)
     inboxes = {str(o / "eml") for o in configured}
     profile_dirs: set[Path] = set()
+    flat_dirs: set[Path] = set()
     eml_dirs: set[Path] = set()
     loose: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -306,6 +323,11 @@ def discover(
         if MANIFEST not in filenames:
             if dirpath not in inboxes and str(here.resolve()) not in inboxes:
                 loose.extend(here / f for f in sorted(filenames) if f.endswith(".eml"))
+            if (
+                any(f.endswith(".pdf") for f in filenames)
+                and archived_eml_dir(here).is_dir()
+            ):
+                flat_dirs.add(here)
             continue
         dirnames[:] = []  # a mail folder holds only the mail's own files
         if _kind(here) == "profile":
@@ -324,6 +346,8 @@ def discover(
                 path.resolve() in configured,
             )
         )
+    for path in sorted(flat_dirs):
+        archives.append(Archive("flat", path, path.name, path.resolve() in configured))
     for path in sorted(eml_dirs):
         folders = sorted(p for p in path.iterdir() if p.is_dir())
         archives.append(Archive("eml", path, _segment(folders, "mail"), False))
@@ -331,6 +355,9 @@ def discover(
 
 
 def _verdicts(archive: Archive) -> list[tuple[Path, str, Path | None]]:
+    if archive.kind == "flat":
+        mails = _Mails.load(_profile_emls(archive.path))
+        return [(f, *verdict_pdf(f, mails)) for f in archive.folders()]
     if archive.kind == "profile":
         mails = _Mails.load(_profile_emls(archive.path))
         return [(f, *verdict(f, mails)) for f in archive.folders()]
@@ -376,8 +403,15 @@ def _recheck(listing: Path) -> int:
         if not line.strip():
             continue
         folder = Path(line.rstrip("/"))
-        kind = _kind(folder)
-        if not folder.is_dir():
+        kind = "flat" if folder.suffix == ".pdf" else _kind(folder)
+        if kind == "flat":
+            if not folder.is_file():
+                result, eml = "not a file", None
+            else:
+                if folder.parent not in profiles:
+                    profiles[folder.parent] = _Mails.load(_profile_emls(folder.parent))
+                result, eml = verdict_pdf(folder, profiles[folder.parent])
+        elif not folder.is_dir():
             result, eml = "not a directory", None
         elif kind == "profile":
             profile_dir = folder.parent.parent
@@ -389,8 +423,8 @@ def _recheck(listing: Path) -> int:
         if result not in _REBUILDABLE or eml is None:
             print(f"skipped ({result}): {folder}", file=sys.stderr)
             rejected += 1
-        elif kind == "profile":
-            print(f"profile\t{folder}")
+        elif kind in ("profile", "flat"):
+            print(f"{kind}\t{folder}")
         else:
             print(f"eml\t{folder}\t{eml}")
     return 1 if rejected else 0
