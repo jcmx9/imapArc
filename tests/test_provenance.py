@@ -44,6 +44,52 @@ def test_an_encrypted_or_broken_pdf_records_nothing() -> None:
     assert provenance.read(b"not a pdf at all") is None
 
 
+def test_a_pdf_with_broken_metadata_records_nothing() -> None:
+    """Not a stream, not XML: still no reason to abort indexing a directory."""
+    for metadata in (pikepdf.Dictionary(X=1), None):
+        doc = pikepdf.Pdf.new()
+        doc.add_blank_page()
+        doc.Root.Metadata = (
+            metadata if metadata is not None else pikepdf.Stream(doc, b"<not xml")
+        )
+        out = io.BytesIO()
+        doc.save(out, fix_metadata_version=False)
+
+        assert provenance.read(out.getvalue()) is None
+
+
+def test_a_message_id_with_control_characters_can_still_be_stamped() -> None:
+    """The sender picks it; XML forbids them — the mail must render regardless."""
+    raw = build_mail(subject="Hi", text="body")
+
+    stamped = provenance.stamp(_pdf(), raw, message_id="<a\x01b\x00@x>")
+
+    recorded = provenance.read(stamped)
+    assert recorded is not None
+    assert recorded.sha256 == hashlib.sha256(raw).hexdigest()
+    assert recorded.message_id == "<ab@x>"
+
+
+def test_embedded_file_names_are_sorted_as_stored() -> None:
+    """A name tree's keys must be in byte order, or a reader's lookup may miss."""
+    stamped = provenance.stamp(
+        _pdf(),
+        b"raw",
+        message_id=None,
+        eml_name="mail.eml",
+        attachments=[
+            ("\u00ff.docx", "application/x-a", b"1"),
+            ("\u042f.docx", "application/x-b", b"2"),
+            ("a.zip", "application/zip", b"3"),
+        ],
+    )
+    with pikepdf.open(io.BytesIO(stamped)) as pdf:
+        keys = [bytes(k) for k in list(pdf.Root.Names.EmbeddedFiles.Names)[0::2]]
+
+    assert keys == sorted(keys)
+    assert len(provenance.embedded_files(stamped)) == 4
+
+
 def test_stamp_records_hash_and_message_id() -> None:
     raw = build_mail(subject="Hi", text="body")
     stamped = provenance.stamp(_pdf(), raw, message_id="<id@x>")

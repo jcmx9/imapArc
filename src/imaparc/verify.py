@@ -119,41 +119,62 @@ def _entry_findings(
     return findings
 
 
-def _is_rendered_elsewhere(eml: Path, known: set[str]) -> bool:
-    """Whether some folder's manifest describes this ``.eml`` under another name.
+@dataclass(frozen=True)
+class _Rendered:
+    """What a profile's renditions record, split by how far it can be trusted."""
 
-    The ``-2``/``-3`` suffixes are handed out independently by ``deliver_eml()``
-    and ``_resolve_output()``, so a mail delivered twice can end up as
-    ``X-2.eml`` beside a folder ``X-3``. Comparing names alone would call that
-    unrendered, which is both wrong and expensive: it buries a genuinely missing
-    PDF among hundreds of false ones.
+    hashes: frozenset[str]  # "sha256:…" lines — conclusive
+    legacy_ids: frozenset[str]  # first lines of manifests written before hashing
+    legacy_names: frozenset[str]  # names of those same pre-hash folders
 
-    The Message-ID is tried first because it is readable from the header block
-    alone; the hash costs reading the whole file and is only computed when the
-    cheap check found nothing.
+    @classmethod
+    def of(cls, entries: list[tuple[Path, str | None]]) -> _Rendered:
+        hashes: set[str] = set()
+        ids: set[str] = set()
+        names: set[str] = set()
+        for path, identity in entries:
+            lines = identity.splitlines() if identity else []
+            found = {ln for ln in lines if ln.startswith(_HASH_PREFIX)}
+            hashes |= found
+            if lines and not found:
+                ids.add(lines[0])
+                names.add(_name(path))
+        return cls(frozenset(hashes), frozenset(ids), frozenset(names))
+
+
+def _is_rendered(eml: Path, rendered: _Rendered) -> bool:
+    """Whether some rendition records exactly this ``.eml``.
+
+    Decided by the content hash, never by the name: the ``-2``/``-3`` suffixes
+    of ``.eml`` and PDF are handed out independently, so ``X.eml`` and ``X.pdf``
+    can be two different mails — a name match hid an unrendered mail until
+    26.11.8. Only a rendition from before 26.8.12, which records no hash, is
+    matched the way it was then: by Message-ID, or by its name.
     """
     try:
         raw = eml.read_bytes()
     except OSError:  # pragma: no cover - unreadable file, reported elsewhere
         return False
+    if f"{_HASH_PREFIX}{hashlib.sha256(raw).hexdigest()}" in rendered.hashes:
+        return True
+    if eml.stem in rendered.legacy_names:
+        return True
     head = re.sub(rb"\r?\n[ \t]+", b" ", raw[:65536].split(b"\r\n\r\n")[0])
     found = _MESSAGE_ID.search(head)
-    if found and found.group(1).decode("utf-8", "replace").strip() in known:
-        return True
-    return f"{_HASH_PREFIX}{hashlib.sha256(raw).hexdigest()}" in known
+    return bool(
+        found
+        and found.group(1).decode("utf-8", "replace").strip() in rendered.legacy_ids
+    )
 
 
-def _unrendered(
-    eml_dir: Path, known: set[str], rendered: set[str], profile: str
-) -> list[Finding]:
+def _unrendered(eml_dir: Path, rendered: _Rendered, profile: str) -> list[Finding]:
     """``.eml`` files with no rendition — never rendered."""
     missing = sorted(
         entry.stem
         for entry in eml_dir.iterdir()
         if entry.is_file()
         and entry.suffix == ".eml"
-        and entry.stem not in rendered
-        and not _is_rendered_elsewhere(entry, known)
+        and not _is_rendered(entry, rendered)
     )
     if not missing:
         return []
@@ -188,12 +209,11 @@ def verify_profile(profile: Profile) -> list[Finding]:
     if not profile.pdf:
         return []
     entries = archive_entries(profile.output)
-    known = {line for _, i in entries if i for line in i.splitlines()}
-    rendered = {_name(path) for path, _ in entries}
+    rendered = _Rendered.of(entries)
     return [
         *_duplicates(entries, profile.name),
         *_entry_findings(profile.output, entries, profile.name),
-        *(f for d in present for f in _unrendered(d, known, rendered, profile.name)),
+        *(f for d in present for f in _unrendered(d, rendered, profile.name)),
     ]
 
 

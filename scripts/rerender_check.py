@@ -7,7 +7,7 @@ Called by ``rerender-list.sh`` and ``rerender-apply.sh``; not part of the
 - **profile** archives — ``<profile>/pdf/<mail>/`` with the ``.eml`` in
   ``<profile>/eml/`` or, once rendered, ``eml-Archiv/<profile>/`` beside it;
 - **eml** folders — ``<dir>/<mail>/`` holding its own ``.eml`` (``imaparc
-  eml`` before 26.11.4);
+  eml`` until 26.11.3);
 - **flat** archives (since 26.11.6) — ``<profile>/<mail>.pdf`` with the
   ``.eml`` in ``eml-Archiv/<profile>/``; the PDF itself records the mail's hash
   in its XMP metadata, so a flat PDF is proven by **hash** only.
@@ -403,7 +403,10 @@ def _recheck(listing: Path) -> int:
         if not line.strip():
             continue
         folder = Path(line.rstrip("/"))
-        kind = "flat" if folder.suffix == ".pdf" else _kind(folder)
+        # A legacy folder may itself be named "….pdf" (dots were kept until
+        # 26.11.2), so the suffix alone does not make it a flat PDF.
+        flat = folder.suffix == ".pdf" and not folder.is_dir()
+        kind = "flat" if flat else _kind(folder)
         if kind == "flat":
             if not folder.is_file():
                 result, eml = "not a file", None

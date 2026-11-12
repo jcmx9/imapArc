@@ -110,7 +110,7 @@ async def render_mail(
     existing: ArchiveIndex | None = None,
     gs_semaphore: asyncio.Semaphore | None = None,
 ) -> RenderResult:
-    """Render one mail to the double PDF structure under ``output_dir``.
+    """Render one mail to ``<output_dir>/<basename>.pdf``.
 
     ``output_dir`` must be writable (the caller keeps it unlocked for the run).
     Returns a :class:`RenderResult`; skips (does nothing) if the output already
@@ -120,7 +120,7 @@ async def render_mail(
     mail each belongs to. Sharing one mapping across a profile's renders makes
     the reservation race-free: a *different* mail resolving to the same base
     disambiguates, while a second copy of the *same* mail skips instead of
-    producing a duplicate folder.
+    producing a duplicate PDF.
 
     ``gs_semaphore`` caps how many Ghostscript conversions run at once. It is
     shared across the run like ``claimed``, because Ghostscript is the
@@ -417,7 +417,7 @@ def _safe_attachment_name(name: str) -> str:
 
     ``Path(name).name`` strips directories, but returns ``".."`` unchanged — it
     is a *name*, not a path component, as far as pathlib is concerned. Joining
-    that onto the staging folder would point at its parent, so the two directory
+    that onto a directory would point at its parent, so the two directory
     aliases are rejected outright. Nothing currently escapes without this (an
     existing target is disambiguated to ``..-2``), but that is a side effect of
     :func:`~imaparc.storage.disambiguate`, not a guarantee — and a mail sender

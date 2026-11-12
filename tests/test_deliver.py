@@ -155,3 +155,31 @@ def test_file_away_keeps_a_source_that_changed_meanwhile(tmp_path: Path) -> None
 def test_file_away_tolerates_a_source_already_gone(tmp_path: Path) -> None:
     [path] = file_away(tmp_path / "gone.eml", b"RAW", [(tmp_path / "arc", "m")])
     assert path.read_bytes() == b"RAW"
+
+
+# --- identity is the content, not the name -----------------------------------
+
+
+def test_identical_content_is_reused_under_any_name(tmp_path: Path) -> None:
+    """File mode names a mail after its PDF; the archive may know it otherwise."""
+    first = deliver_eml(tmp_path / "eml", b"RAW", "fetched-name")
+
+    again = deliver_eml(tmp_path / "eml", b"RAW", "pdf-name")
+
+    assert again == first
+    assert [p.name for p in (tmp_path / "eml").iterdir()] == ["fetched-name.eml"]
+
+
+def test_a_same_sized_different_mail_is_still_delivered(tmp_path: Path) -> None:
+    deliver_eml(tmp_path / "eml", b"AAA", "a")
+
+    other = deliver_eml(tmp_path / "eml", b"BBB", "b")
+
+    assert other.read_bytes() == b"BBB"
+    assert len(list((tmp_path / "eml").iterdir())) == 2
+
+
+def test_a_newly_created_archive_parent_is_private(tmp_path: Path) -> None:
+    deliver_eml(tmp_path / "eml-Archiv" / "p", b"RAW", "m")
+
+    assert stat.S_IMODE((tmp_path / "eml-Archiv").stat().st_mode) == 0o700

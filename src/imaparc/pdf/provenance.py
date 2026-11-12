@@ -1,13 +1,13 @@
 """Record in the PDF itself which mail it was rendered from.
 
-The ``.imaparc-manifest`` beside a PDF names its mail, but only while the two
-stay together. A PDF copied out of its folder, mailed on or renamed loses that
-link. So the finished PDF/A-3b carries its provenance inside:
+The PDF is the whole record of a rendered mail — there is no manifest or folder
+beside it (until 26.11.5 there was) — so the finished PDF/A-3b carries its
+provenance inside, where copying, mailing or renaming cannot separate them:
 
-- **XMP metadata** — the mail's SHA-256 (the same value as the manifest's
-  ``sha256:`` line) and its Message-ID, under imapArc's own namespace. PDF/A
-  allows custom properties only when the file declares their schema, so the
-  ``pdfaExtension`` description is written alongside; without it veraPDF fails.
+- **XMP metadata** — the mail's SHA-256 and its Message-ID, under imapArc's own
+  namespace. PDF/A allows custom properties only when the file declares their
+  schema, so the ``pdfaExtension`` description is written alongside; without it
+  veraPDF fails.
 - **The .eml itself** (optional), as a PDF/A-3 *associated file* with
   ``/AFRelationship /Source`` — the PDF then holds its own original.
 - **Attachments that did not become pages** (optional), as associated files
@@ -39,6 +39,10 @@ NAMESPACE = "https://github.com/jcmx9/imapArc/ns/provenance/1.0/"
 PREFIX = "imaparc"
 _RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 _EML_MIME = "message/rfc822"
+# Everything XML 1.0 forbids in character data.
+_XML_INVALID = re.compile(
+    "[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]"
+)
 _MIME = re.compile(r"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*")
 
 _PROPERTIES = (
@@ -131,20 +135,26 @@ def read(source: bytes | Path) -> Provenance | None:
     """Read the provenance a PDF records, or ``None`` if it records none.
 
     ``source`` may be a path: pikepdf then reads only what it needs, which
-    matters when a whole archive is indexed.
+    matters when a whole archive is indexed. **Never raises** on a PDF it cannot
+    make sense of — password-protected, truncated, a ``/Metadata`` that is no
+    stream or no XML: a profile directory may hold foreign files, and one of
+    them must not abort indexing the rest. Such a file records nothing.
     """
     try:
-        pdf = pikepdf.open(io.BytesIO(source) if isinstance(source, bytes) else source)
-    except (pikepdf.PdfError, pikepdf.PasswordError, OSError):
-        # Unreadable or password-protected: certainly not one of imapArc's.
-        return None
-    with pdf:
-        if "/Metadata" not in pdf.Root:
-            return None
-        try:
+        opened = io.BytesIO(source) if isinstance(source, bytes) else source
+        with pikepdf.open(opened) as pdf:
+            if "/Metadata" not in pdf.Root:
+                return None
             root = etree.fromstring(pdf.Root.Metadata.read_bytes())
-        except etree.XMLSyntaxError:
-            return None
+    except (
+        pikepdf.PdfError,
+        pikepdf.PasswordError,
+        etree.XMLSyntaxError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
+        return None
     sha = root.find(f".//{{{NAMESPACE}}}sourceSha256")
     if sha is None or not sha.text:
         return None
@@ -197,8 +207,10 @@ def _write_xmp(pdf: pikepdf.Pdf, sha256: str, message_id: str | None) -> None:
     )
     props.set(f"{{{_RDF}}}about", "")
     etree.SubElement(props, f"{{{NAMESPACE}}}sourceSha256").text = sha256
-    if message_id:
-        etree.SubElement(props, f"{{{NAMESPACE}}}messageId").text = message_id
+    if message_id and (cleaned := _XML_INVALID.sub("", message_id)):
+        # The sender picks the Message-ID; a control character in it is not
+        # valid XML and would otherwise make the mail impossible to render.
+        etree.SubElement(props, f"{{{NAMESPACE}}}messageId").text = cleaned
     packet = (
         b"<?xpacket begin='\xef\xbb\xbf' id='W5M0MpCehiHzreSzNTczkc9d'?>\n"
         + etree.tostring(root, encoding="utf-8")
@@ -217,7 +229,7 @@ def _embed(
     """Embed ``files`` as PDF/A-3 associated files, listed in the catalog.
 
     Names are made unique (two attachments may share one), and the name tree
-    is sorted, as the PDF specification requires of its keys.
+    is sorted by its stored key bytes, as the PDF specification requires.
     """
     specs: list[tuple[str, pikepdf.Object]] = []
     taken: set[str] = set()
@@ -253,7 +265,9 @@ def _embed(
         )
     pdf.Root.AF = Array([spec for _, spec in specs])
     names = Array()
-    for unique, spec in sorted(specs, key=lambda item: item[0].encode("utf-16-be")):
+    # Ordered by the key bytes as stored (pikepdf writes PDFDocEncoding where it
+    # can, UTF-16 with a BOM otherwise) — the order a reader's lookup relies on.
+    for unique, spec in sorted(specs, key=lambda item: bytes(String(item[0]))):
         names.extend([String(unique), spec])
     pdf.Root.Names = Dictionary(EmbeddedFiles=Dictionary(Names=names))
 

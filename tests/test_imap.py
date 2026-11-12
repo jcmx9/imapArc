@@ -148,3 +148,20 @@ def test_scan_can_let_the_server_drop_large_mail() -> None:
 
     assert "Smaller Tiny" in subjects
     assert "Smaller Huge" not in subjects
+
+
+def test_scan_keeps_the_offsets_the_server_reports() -> None:
+    """Dates must stay aware, so naming can convert them to local time itself.
+
+    imapclient's default hands back naive local times computed with *today's*
+    UTC offset, which put a summer mail fetched in winter an hour off.
+    """
+    _deliver("Aware Dates")
+
+    with ImapConnection(_account()) as conn:
+        _, messages = conn.scan("INBOX")
+
+    message = next(m for m in messages if m.headers.subject == "Aware Dates")
+    assert message.headers.date is not None
+    assert message.headers.date.tzinfo is not None
+    assert message.received is not None and message.received.tzinfo is not None

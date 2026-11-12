@@ -277,6 +277,23 @@ def test_an_archived_mail_without_a_folder_is_unrendered(tmp_path: Path) -> None
     assert "no-archive" not in _kinds(findings)
 
 
+def test_a_name_match_does_not_hide_an_unrendered_mail(tmp_path: Path) -> None:
+    """X.pdf holds mail B; mail A in X.eml was never rendered.
+
+    Pairing by name called A rendered. Ordinary in practice: two mails share a
+    base name, and until 26.11.8 the second delivered was rendered first.
+    """
+    output = tmp_path / "p"
+    _archived(output, "X", b"Message-ID: <a@x>\r\n\r\nmail A")
+    _archived(output, "X-2", b"Message-ID: <b@x>\r\n\r\nmail B")
+    _flat(output, "X", b"Message-ID: <b@x>\r\n\r\nmail B")
+
+    findings = verify_profile(_profile(output))
+
+    assert _kinds(findings) == {"unrendered"}
+    assert "X" in findings[0].detail and "X-2" not in findings[0].detail
+
+
 # --- report shape ----------------------------------------------------------
 
 
@@ -285,8 +302,7 @@ def test_many_warnings_of_a_kind_collapse_into_one_line() -> None:
     from imaparc.cli import _verify_lines
 
     findings = [
-        Finding("duplicate", Severity.WARN, "Sudbrackschule", f"folder {i}")
-        for i in range(40)
+        Finding("duplicate", Severity.WARN, "school", f"folder {i}") for i in range(40)
     ]
 
     summary = _verify_lines(findings, verbose=False)

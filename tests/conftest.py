@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shutil
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -38,3 +40,23 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_chromium)
         if "requires_tools" in item.keywords and missing:
             item.add_marker(skip_tools)
+
+
+@pytest.fixture(autouse=True)
+def _fixed_timezone(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Run every test in Europe/Berlin.
+
+    Names and the header block show *local* time, so the expected strings
+    depend on the machine's zone — CI runs in UTC, a developer's laptop not.
+    """
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.fixture(autouse=True)
+def _own_run_lock(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Give each test its own render lock, so parallel workers never queue."""
+    monkeypatch.setenv("IMAPARC_LOCK_DIR", str(tmp_path / ".locks"))

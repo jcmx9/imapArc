@@ -71,3 +71,17 @@ def test_paths_lists_without_reading_the_files(
         "2026-03-23_02-18-04_p_a.eml",
         "2026-03-24_09-00-00_p_b.eml",
     ]
+
+
+def test_a_suffixed_copy_comes_after_its_original(tmp_path: Path) -> None:
+    """X.eml, then X-2.eml, then X-10.eml — not plain name order.
+
+    Plain order puts X-2 first, so the second mail delivered under a base name
+    was rendered first and took the unsuffixed PDF name.
+    """
+    for name in ("X-10.eml", "X-2.eml", "X.eml", "W.eml"):
+        (tmp_path / name).write_bytes(b"x")
+
+    order = [p.name for p in EmlSource(tmp_path).paths()]
+
+    assert order == ["W.eml", "X.eml", "X-2.eml", "X-10.eml"]
