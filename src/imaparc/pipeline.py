@@ -97,6 +97,7 @@ async def render_mail(
     config: RunConfig,
     received: datetime | None = None,
     claimed: dict[str, str] | None = None,
+    existing: ArchiveIndex | None = None,
     gs_semaphore: asyncio.Semaphore | None = None,
 ) -> RenderResult:
     """Render one mail to the double PDF structure under ``output_dir``.
@@ -128,7 +129,7 @@ async def render_mail(
         date_format=config.date_format,
     )
     identity = mail_identity(raw, parsed, timestamp)
-    basename, skip = _resolve_output(output_dir, base, identity, claimed)
+    basename, skip = _resolve_output(output_dir, base, identity, claimed, existing)
     if skip:
         return RenderResult(basename, written=False, skipped=True)
 
@@ -232,8 +233,62 @@ def read_identity(subfolder: Path) -> str | None:
         return None
 
 
+@dataclass
+class ArchiveIndex:
+    """Which mails an output directory already holds — found by manifest, not name.
+
+    Looking a mail up under the name it *would* get is not enough: the name
+    depends on the naming scheme (which changes between versions and per
+    profile) and on ``-2``/``-3`` counters, so a renamed scheme would otherwise
+    render every archived mail a second time under its new name. Built once per
+    output directory and run, before any render starts.
+
+    Matching follows :func:`same_mail`: a stored hash is compared only with the
+    hash; a manifest from before 26.8.12 (no hash) by its Message-ID.
+    """
+
+    by_hash: dict[str, str] = field(default_factory=dict)
+    by_legacy_id: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def scan(cls, output_dir: Path) -> ArchiveIndex:
+        index = cls()
+        if not output_dir.is_dir():
+            return index
+        for sub in sorted(output_dir.iterdir()):
+            # Dot-entries are staging folders; folders without a manifest are not
+            # imapArc's (an adhoc output directory is the user's own folder).
+            if sub.name.startswith(".") or not sub.is_dir():
+                continue
+            stored = read_identity(sub)
+            if not stored:
+                continue
+            lines = stored.splitlines()
+            hashes = [ln for ln in lines if ln.startswith(_HASH_PREFIX)]
+            for line in hashes:
+                index.by_hash.setdefault(line, sub.name)
+            if not hashes:
+                index.by_legacy_id.setdefault(lines[0], sub.name)
+        return index
+
+    def find(self, identity: str) -> str | None:
+        """The folder already holding the mail ``identity`` describes, if any."""
+        lines = identity.splitlines()
+        for line in lines:
+            if line.startswith(_HASH_PREFIX) and line in self.by_hash:
+                return self.by_hash[line]
+        for line in lines:
+            if not line.startswith(_HASH_PREFIX) and line in self.by_legacy_id:
+                return self.by_legacy_id[line]
+        return None
+
+
 def _resolve_output(
-    output_dir: Path, base: str, identity: str, claimed: dict[str, str] | None = None
+    output_dir: Path,
+    base: str,
+    identity: str,
+    claimed: dict[str, str] | None = None,
+    existing: ArchiveIndex | None = None,
 ) -> tuple[str, bool]:
     """Pick the per-mail folder name to write under and whether to skip.
 
@@ -257,9 +312,15 @@ def _resolve_output(
     mail in All Mail and in a label folder, and a re-uploaded mail comes back
     with a fresh UID.
 
+    ``existing`` is checked first: a folder holding this mail under *any* name —
+    an older naming scheme, a drifted suffix — means skip. Without it, only the
+    folder under ``base`` is consulted.
+
     A returned non-skip basename is reserved before returning — with no ``await``
     between here and the write, that reservation is atomic within the event loop.
     """
+    if existing is not None and (found := existing.find(identity)) is not None:
+        return found, True
     if claimed is None:
         claimed = {}
     candidate = base

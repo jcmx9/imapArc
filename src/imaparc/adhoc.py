@@ -22,7 +22,7 @@ from imaparc.config import RunConfig, ToolPaths
 from imaparc.console import make_progress
 from imaparc.exceptions import ImapArcError, SourceError
 from imaparc.mail.parser import parse_mail
-from imaparc.pipeline import RenderResult, render_mail, sweep_staging
+from imaparc.pipeline import ArchiveIndex, RenderResult, render_mail, sweep_staging
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
 from imaparc.storage import FILE_MODE, disambiguate
@@ -182,6 +182,7 @@ async def run_adhoc(
             # One reservation set per directory: base names only have to be
             # unique within the folder they are written to.
             claimed: dict[Path, dict[str, str]] = {d: {} for d in by_directory}
+            existing = {d: ArchiveIndex.scan(d) for d in by_directory}
 
             async def process(eml: Path) -> RenderResult | None:
                 async with semaphore:
@@ -196,6 +197,7 @@ async def run_adhoc(
                             config=config,
                             received=_received(eml),
                             claimed=claimed[eml.parent],
+                            existing=existing[eml.parent],
                             gs_semaphore=gs_semaphore,
                         )
                     except (ImapArcError, OSError) as exc:

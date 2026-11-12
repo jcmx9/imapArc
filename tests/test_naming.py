@@ -92,3 +92,25 @@ def test_build_base_name_sanitizes_colon_for_maildir() -> None:
     name = build_base_name(datetime(2026, 3, 23), "p", "Re: in/voice")
     assert ":" not in name
     assert "/" not in name
+
+
+def test_build_base_name_drops_dots_and_commas_from_the_subject() -> None:
+    name = build_base_name(
+        datetime(2026, 11, 12, 8, 45, 4),
+        "Kirsten",
+        "Re: Maklertermin am 17. November, 14 Uhr",
+    )
+    assert name == "2026-11-12_08-45-04_Kirsten_Re_Maklertermin_am_17_November_14_Uhr"
+
+
+def test_build_base_name_leaves_no_trailing_dot() -> None:
+    name = build_base_name(datetime(2026, 1, 1), "p", "Receipt from Cline Bot Inc.")
+    assert name.endswith("_Cline_Bot_Inc")
+
+
+def test_build_base_name_keeps_dots_the_date_format_asks_for() -> None:
+    # Only the mail-supplied parts are cleaned; a chosen date format is not.
+    name = build_base_name(
+        datetime(2026, 3, 23), "p", "Rechnung 1.5", date_format="DD.MM.YYYY"
+    )
+    assert name == "23.03.2026_p_Rechnung_1_5"

@@ -22,7 +22,7 @@ from imaparc.config import RunConfig, ToolPaths
 from imaparc.console import make_progress
 from imaparc.exceptions import ImapArcError
 from imaparc.mail.parser import parse_mail
-from imaparc.pipeline import RenderResult, render_mail, sweep_staging
+from imaparc.pipeline import ArchiveIndex, RenderResult, render_mail, sweep_staging
 from imaparc.profiles import Profile
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
@@ -134,6 +134,9 @@ async def _render_profile(
     # to one basename reserve distinct names, while two copies of the same mail
     # (two UIDs, one Message-ID) collapse into a single folder.
     claimed: dict[str, str] = {}
+    # What is already archived, by manifest: a mail stored under an older naming
+    # scheme is recognised instead of being rendered again under its new name.
+    existing = ArchiveIndex.scan(output)
 
     async def process(path: Path) -> RenderResult | None:
         async with semaphore:
@@ -151,6 +154,7 @@ async def _render_profile(
                     config=config,
                     received=received_from_file(path),
                     claimed=claimed,
+                    existing=existing,
                     gs_semaphore=gs_semaphore,
                 )
                 # One line per mail at -v so a long run can be watched; the
