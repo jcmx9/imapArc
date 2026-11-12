@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.4] - 2026-11-12
+
 ### Changed
 - **Rendered mail moves to the `eml-Archiv`.** Once a mail's PDF folder exists,
   `render` moves its `.eml` from `<profile>/eml/` to `eml-Archiv/<profile>/`
