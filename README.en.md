@@ -220,6 +220,18 @@ This command is separate from the archive: it reads no `profile.yaml`, contacts 
 
 > **Remote images are always loaded here** — unlike the profile-driven commands, where you have to opt in. A mail you pulled out by hand should look the way its sender laid it out, and it was already open in your mail client anyway. The price: rendering fetches tracking pixels too, so the sender learns when and from which IP the mail was processed. If you would rather avoid that, file the mail into a profile archive and use `imaparc render` instead.
 
+### Re-rendering an archive with a newer version
+
+`imaparc render` never overwrites: a mail that is already rendered is skipped. To rebuild older PDFs with a newer version, first set the affected PDF folders aside — but only those whose mail provably still exists as `.eml`. Two scripts in the repository do that (they need `uv` and `pdftotext`):
+
+```bash
+./scripts/rerender-list.sh ~/imapArc ~/rerender         # read-only: writes the lists
+./scripts/rerender-apply.sh ~/rerender/rerender.txt --move-to ~/imapArc-alt
+imaparc render                                          # rebuilds the folders
+```
+
+`rerender-list.sh` matches every PDF folder to its `.eml` through its manifest — by the hash of the raw bytes or, for manifests older than 26.8.12, by the Message-ID **and** the PDF's own text (sender, date, subject, opening of the body). Never by name. `rerender.txt` holds the folders that can safely be rebuilt; `keep.txt` the rest with a reason. `rerender-apply.sh` re-checks the list before acting, asks for confirmation and moves (`--move-to`, reversible, target outside the archive) or deletes (`--delete`).
+
 ## Options
 
 | Command | Option | Description |

@@ -221,6 +221,18 @@ Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, konta
 
 > **Externe Bilder werden hier immer geladen** — anders als bei den profilgesteuerten Befehlen, wo das ausdrücklich eingeschaltet werden muss. Eine von Hand herausgezogene Mail soll so aussehen, wie der Absender sie gesetzt hat, und sie war im Mailprogramm ohnehin schon geöffnet. Der Preis: Beim Rendern werden auch Tracking-Pixel abgerufen, der Absender erfährt also Zeitpunkt und IP-Adresse der Verarbeitung. Wer das nicht will, legt die Mail stattdessen in ein Profil-Archiv und nutzt `imaparc render`.
 
+### Archiv mit neuer Version neu rendern
+
+`imaparc render` überschreibt nie: Eine bereits gerenderte Mail wird übersprungen. Wer ältere PDFs mit einer neueren Version neu erzeugen will, räumt deshalb zuerst die betreffenden PDF-Ordner beiseite — aber nur die, deren Mail nachweislich noch als `.eml` vorliegt. Dafür gibt es zwei Skripte im Repository (benötigen `uv` und `pdftotext`):
+
+```bash
+./scripts/rerender-list.sh ~/imapArc ~/rerender         # nur lesend: erstellt die Listen
+./scripts/rerender-apply.sh ~/rerender/rerender.txt --move-to ~/imapArc-alt
+imaparc render                                          # erzeugt die Ordner neu
+```
+
+`rerender-list.sh` ordnet jeden PDF-Ordner über sein Manifest der `.eml` zu — über den Hash der Rohdaten oder, bei Manifesten vor 26.8.12, über die Message-ID **und** den Text der PDF selbst (Absender, Datum, Betreff, Textanfang). Nie über den Namen. `rerender.txt` enthält die Ordner, die sicher neu entstehen können; `keep.txt` die übrigen mit Grund. `rerender-apply.sh` prüft die Liste vor dem Verschieben erneut, fragt nach und verschiebt (`--move-to`, umkehrbar, Ziel außerhalb des Archivs) oder löscht (`--delete`).
+
 ## Optionen
 
 | Befehl | Option | Beschreibung |
