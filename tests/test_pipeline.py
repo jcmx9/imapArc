@@ -7,7 +7,9 @@ import hashlib
 import io
 import shutil
 import stat
+import subprocess
 from collections.abc import Iterator
+from email import message_from_bytes, policy
 from pathlib import Path
 
 import pikepdf
@@ -235,6 +237,143 @@ async def test_render_mail_end_to_end(tmp_path: Path) -> None:
     assert titles[0] == "E-Mail"
     assert titles[-2:] == ["Anhang 1: doc.pdf", "Anhang 2: report.docx"]
 
+    assert run_verapdf(tools.verapdf, pdf).compliant
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+async def test_private_use_characters_do_not_break_pdfa(tmp_path: Path) -> None:
+    """A Word bullet (U+F0B7) in the text made the whole PDF non-conformant."""
+    raw = build_mail(subject="Liste", text="Punkte:\n\uf0b7 eins\n\uf0a7 zwei")
+    tools = ToolPaths.resolve()
+
+    async with BrowserPool() as pool:
+        result = await render_mail(
+            parse_mail(raw),
+            raw=raw,
+            profile="test",
+            output_dir=tmp_path,
+            pool=pool,
+            config=RunConfig(tools=tools),
+        )
+
+    assert result.combined_pdf is not None
+    assert run_verapdf(tools.verapdf, result.combined_pdf).compliant
+
+
+# --- a mail attached to a mail -----------------------------------------------
+
+
+def _offline_config() -> RunConfig:
+    """A config for code that never calls the tools."""
+    tools = ToolPaths(gs=Path("/g"), qpdf=Path("/q"), verapdf=Path("/v"))
+    return RunConfig(tools=tools)
+
+
+def _with_attached_mail(inner: bytes, *, subject: str = "Outer") -> bytes:
+    """A mail carrying ``inner`` as a real message/rfc822 part."""
+    outer = message_from_bytes(
+        build_mail(subject=subject, text="OUTER BODY"), policy=policy.default
+    )
+    outer.make_mixed()
+    outer.add_attachment(message_from_bytes(inner, policy=policy.default))
+    return outer.as_bytes()
+
+
+def test_an_attached_mail_is_recognised_in_every_form() -> None:
+    from imaparc.pipeline import _attached_mail
+
+    config = _offline_config()
+    inner = build_mail(subject="Inner", text="INNER BODY", message_id="<i@x>")
+
+    as_rfc822 = parse_mail(_with_attached_mail(inner)).attachments[0]
+    # Some clients base64-encode the part, which the parser cannot undo.
+    as_base64 = parse_mail(
+        build_mail(attachments=[("fwd.eml", "message/rfc822", inner)])
+    ).attachments[0]
+    as_file = parse_mail(
+        build_mail(attachments=[("fwd.eml", "application/octet-stream", inner)])
+    ).attachments[0]
+
+    for attachment in (as_rfc822, as_base64, as_file):
+        found = _attached_mail(attachment, config)
+        assert found is not None
+        nested, raw = found
+        assert nested.headers.subject == "Inner"
+        assert (nested.text_body or "").strip() == "INNER BODY"
+        assert parse_mail(raw).headers.message_id == "<i@x>"
+
+
+def test_only_real_mails_count_as_attached_mails() -> None:
+    from imaparc.pipeline import _attached_mail
+
+    config = _offline_config()
+    named_eml = parse_mail(
+        build_mail(attachments=[("notes.eml", "application/x-thing", b"just text")])
+    ).attachments[0]
+    a_pdf = parse_mail(
+        build_mail(attachments=[("a.pdf", "application/pdf", _pdf())])
+    ).attachments[0]
+
+    assert _attached_mail(named_eml, config) is None  # no mail header at all
+    assert _attached_mail(a_pdf, config) is None
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+async def test_an_attached_mail_is_rendered_as_pages(tmp_path: Path) -> None:
+    """A mail forwarded "as attachment" is shown, not just kept as a file."""
+    inner = build_mail(
+        subject="Inner",
+        text="INNER SENTINEL body",
+        message_id="<i@x>",
+        attachments=[
+            ("inner.pdf", "application/pdf", _pdf(2)),
+            ("sheet.xlsx", "application/vnd.ms-excel", b"PK not a sheet"),
+        ],
+    )
+    outer = message_from_bytes(_with_attached_mail(inner), policy=policy.default)
+    outer.add_attachment(
+        _pdf(1), maintype="application", subtype="pdf", filename="outer.pdf"
+    )
+    raw = outer.as_bytes()
+    parsed = parse_mail(raw)
+    tools = ToolPaths.resolve()
+
+    async with BrowserPool() as pool:
+        result = await render_mail(
+            parsed,
+            raw=raw,
+            profile="test",
+            output_dir=tmp_path,
+            pool=pool,
+            config=RunConfig(tools=tools),
+        )
+
+    pdf = result.combined_pdf
+    assert pdf is not None
+    with pikepdf.open(pdf) as doc, doc.open_outline() as outline:
+        titles = [item.title for item in outline.root]
+    # The attached mail, its own attachments numbered beneath it, then the
+    # carrier's next attachment.
+    assert titles == [
+        "E-Mail",
+        "Anhang 1: attachment-01.rfc822",
+        "Anhang 1.1: inner.pdf",
+        "Anhang 1.2: sheet.xlsx",
+        "Anhang 2: outer.pdf",
+    ]
+    text = subprocess.run(
+        ["pdftotext", str(pdf), "-"], capture_output=True, text=True, check=True
+    ).stdout
+    assert "OUTER BODY" in text and "INNER SENTINEL body" in text
+
+    # The attached mail is embedded too, as a .eml a mail client opens, beside
+    # the one attachment that could not become pages.
+    files = provenance.embedded_files(pdf)
+    assert files["attachment-01.eml"] == ("Data", inner)
+    assert files["sheet.xlsx"] == ("Data", b"PK not a sheet")
+    assert files[f"{result.basename}.eml"] == ("Source", raw)
     assert run_verapdf(tools.verapdf, pdf).compliant
 
 

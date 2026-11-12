@@ -5,6 +5,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **A mail attached to a mail is rendered as pages.** A message forwarded "as
+  attachment" (`message/rfc822`, or a `.eml` file) used to get an info page
+  only. It is now shown like a mail — header block, body, text version —
+  behind its own bookmark, followed by *its* attachments as "Anhang N.M", up
+  to three levels deep. The attached mail is also embedded as a `.eml` file.
+  Base64-encoded `message/rfc822` parts, which some clients send, are decoded.
+
+### Fixed
+- **Private-use characters no longer cost PDF/A conformance.** Word and Outlook
+  write bullets as Symbol-font code points (U+F0B7 …) for which no font has a
+  glyph; one of them in a mail's text made the whole PDF non-conformant. The
+  text renditions show a plain bullet instead — the `.eml` keeps the original.
+
 ## [26.11.12] - 2026-11-12
 
 ### Added
