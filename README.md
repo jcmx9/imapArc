@@ -19,6 +19,7 @@ Leitprinzip: **imapArc bewahrt, es verändert nicht.** Die vollständige Rohmail
 - **Lesbare `.eml`-Dateien** mit demselben Namen wie das PDF; in jedem Mailprogramm einzeln zu öffnen.
 - **Echtes Browser-Rendering** über Chromium — auch komplexes Newsletter-HTML originalgetreu, bis zu drei Fassungen je Mail (umgebrochen, Nur-Text sowie eine skalierte Ein-Seiten-Übersicht bei mehrseitigen Mails).
 - **Kein Nachladen externer Ressourcen** — Tracking-Pixel werden vor dem Rendern entfernt. (Ausnahme: `imaparc eml` lädt sie bewusst, siehe dort.)
+- **Ein Archiv für alles:** Nach dem Rendern wandert die `.eml` aus `<Profil>/eml/` ins `eml-Archiv/<Profil>/`; `imaparc eml` legt auch Mails von anderswo dort ab und ermittelt das Profil aus dem Header.
 - **Selbstbelegende PDFs:** Jede PDF nennt in ihren Metadaten Message-ID und SHA-256 der `.eml`, aus der sie entstand; die vollständige PDF trägt die `.eml` zudem als eingebettete Quelldatei (PDF/A-3). Herauskopiert oder umbenannt bleibt sie so ihrer Mail zuzuordnen.
 - **Schützendes, privates Archiv** — Dateien `0400` (read-only Inhalt), Verzeichnisse `0700` (privat, aber vom Besitzer verwaltbar), **nie überschreiben** (Kollision → `…-2`).
 
@@ -179,7 +180,7 @@ imaparc add-profile NAME # ein neues, voll dokumentiertes Profil an profile.yaml
 imaparc list-profiles    # definierte Profile als Tabelle anzeigen (Regeln, Ziel, Aktion)
 imaparc sync-profiles    # bestehende profile.yaml ins Vollformat überführen (Backup)
 imaparc reset            # Zustell-Status löschen → nächster fetch verarbeitet alles neu
-imaparc eml              # lose .eml-Dateien rendern, ganz ohne Profil
+imaparc eml              # .eml von überall ins Archiv legen, Profil aus dem Header
 imaparc install-service  # Finder-Rechtsklick „Mit imapArc archivieren" einrichten
 imaparc doctor           # Installation prüfen: Werkzeuge, Browser, Config, Login
 imaparc verify           # Archiv prüfen: Duplikate, Schäden, Reste
@@ -195,44 +196,46 @@ imaparc --help           # (auch: imaparc ohne Argument)
 
 `imaparc render` braucht kein `.env` (kein IMAP-Zugriff). Jeder `fetch`-Lauf bewertet alle Mails der konfigurierten Ordner neu gegen die **aktuellen** Profile; bereits zugestellte werden übersprungen. Änderst du ein Profil oder fügst eins hinzu, greift es automatisch auf alte Mails — kein State-Zurücksetzen nötig. Ein zweiter `render`-Lauf überspringt bereits erzeugte Mails.
 
-### Einzelne Mails ohne Profil: `imaparc eml`
+### Einzelne Mails ins Archiv: `imaparc eml`
 
-Zieht man eine Mail aus Apple Mail, Thunderbird oder Outlook in den Finder, entsteht eine `.eml`-Datei. `imaparc eml` rendert solche Dateien dort, wo sie liegen — ohne Profil, ohne `.env`, ohne Serverkontakt:
+Zieht man eine Mail aus Apple Mail, Thunderbird oder Outlook in den Finder, entsteht eine `.eml`-Datei. `imaparc eml` legt solche Dateien – egal, wo sie liegen – genauso ins Archiv, wie `fetch` + `render` es täten. Ohne `.env`, ohne Serverkontakt:
 
 ```bash
 imaparc eml                        # alle .eml im aktuellen Verzeichnis
 imaparc eml ~/Desktop              # alle .eml dort
 imaparc eml a.eml b.eml            # genau diese beiden
-imaparc eml --name hetzner *.eml   # eigener Namensteil statt "mail"
+imaparc eml --name hetzner *.eml   # Namensteil für Mails ohne passendes Profil
+imaparc eml --root ~/Archiv a.eml  # anderes Archiv-Wurzelverzeichnis
 ```
 
-Aus jeder `.eml` wird ein Ordner daneben, der die Mail vollständig enthält — und die `.eml` wandert anschließend hinein:
+Das **Profil ergibt sich aus dem Header**: Die Regeln der `profile.yaml` (Absender- und Empfängeradressen, Domains, Betreff, Datum, Anhangtypen) werden auf die Mail angewandt; Ordnerregeln gelten nur für IMAP und bleiben hier außen vor. Passt die Mail zu mehreren Profilen, landet sie in jedem; passt sie zu keinem, in `~/imapArc/00_Mails`. Die PDF entsteht in `<Profil>/pdf/<basename>/`, und sobald sie existiert, wandert die `.eml` nach `eml-Archiv/<Profil>/`:
 
 ```
-2026-07-01_10-30-00_mail_Rechnung_Juli_2026/
-├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026.pdf           # Mail + Anhangseiten
-├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026_mailonly.pdf  # nur die Mail
-├── 2026-07-01_10-30-00_mail_Rechnung_Juli_2026.eml           # das Original
-└── rechnung.pdf                                              # Anhang im Original
+~/imapArc/
+├── Hetzner/pdf/2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026/
+│   ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.pdf   # Mail + Anhänge, .eml eingebettet
+│   └── rechnung.pdf                                         # Anhang im Original
+└── eml-Archiv/Hetzner/
+    └── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.eml   # das Original
 ```
 
-Ein Verzeichnisargument nimmt nur die `.eml` **direkt darin**, nicht in Unterordnern — die bereits einsortierten Mails werden also nie erneut eingesammelt. Ein zweiter Lauf ist damit folgenlos, und ein zwischendrin abgebrochener Lauf repariert sich beim nächsten Aufruf von selbst.
+Ein Verzeichnisargument nimmt nur die `.eml` **direkt darin**, nicht in Unterordnern. Eine schon archivierte Mail wird am Manifest erkannt und nicht doppelt gerendert; eine zweite Kopie derselben Bytes wird mit der archivierten zusammengelegt. Ein abgebrochener Lauf lässt höchstens eine überzählige Kopie zurück, nie eine fehlende – der nächste Aufruf räumt sie weg.
 
-Dieser Befehl arbeitet getrennt vom Archiv: er liest keine `profile.yaml`, kontaktiert keinen IMAP-Server und schreibt nichts in die Zustell-Datenbank. Ein späteres `imaparc fetch` verhält sich exakt so, als hätte es ihn nie gegeben.
+Mit IMAP hat dieser Befehl nichts zu tun: kein Serverkontakt, kein Eintrag in der Zustell-Datenbank. Ohne `profile.yaml` landet alles in `00_Mails`.
 
-> **Externe Bilder werden hier immer geladen** — anders als bei den profilgesteuerten Befehlen, wo das ausdrücklich eingeschaltet werden muss. Eine von Hand herausgezogene Mail soll so aussehen, wie der Absender sie gesetzt hat, und sie war im Mailprogramm ohnehin schon geöffnet. Der Preis: Beim Rendern werden auch Tracking-Pixel abgerufen, der Absender erfährt also Zeitpunkt und IP-Adresse der Verarbeitung. Wer das nicht will, legt die Mail stattdessen in ein Profil-Archiv und nutzt `imaparc render`.
+> **Externe Bilder werden hier immer geladen** — anders als bei `imaparc render`, wo das je Profil eingeschaltet werden muss. Eine von Hand herausgezogene Mail soll so aussehen, wie der Absender sie gesetzt hat, und sie war im Mailprogramm ohnehin schon geöffnet. Der Preis: Beim Rendern werden auch Tracking-Pixel abgerufen, der Absender erfährt also Zeitpunkt und IP-Adresse der Verarbeitung.
 
 ### Archiv mit neuer Version neu rendern
 
-`imaparc render` überschreibt nie: Eine bereits gerenderte Mail wird übersprungen — erkannt am Manifest, nicht am Namen, sodass auch Ordner aus einem älteren Namensschema als erledigt gelten. Wer ältere PDFs mit einer neueren Version neu erzeugen will, räumt deshalb zuerst die betreffenden PDF-Ordner beiseite — aber nur die, deren Mail nachweislich noch als `.eml` vorliegt. Dafür gibt es zwei Skripte im Repository (benötigen `uv` und `pdftotext`):
+`imaparc render` überschreibt nie: Eine bereits gerenderte Mail wird übersprungen — erkannt am Manifest, nicht am Namen. Wer ältere PDFs mit einer neueren Version neu erzeugen will, räumt deshalb zuerst die betreffenden PDF-Ordner beiseite — aber nur die, deren Mail nachweislich noch als `.eml` vorliegt. Dafür gibt es zwei Skripte im Repository (benötigen `uv` und `pdftotext`):
 
 ```bash
-./scripts/rerender-list.sh ~ ~/rerender --exclude ~/imapArc-alt    # nur lesend
-./scripts/rerender-apply.sh ~/rerender/rerender.txt --move-to ~/imapArc-alt
-bash ~/rerender/render.sh                                          # erzeugt alles neu
+./scripts/rerender-list.sh ~ ~/rerender --exclude ~/imapArc-alt              # nur lesend
+./scripts/rerender-apply.sh ~/rerender/rerender.txt --move-to ~/imapArc/pdf-Löscharchiv
+bash ~/rerender/render.sh                                                    # erzeugt alles neu
 ```
 
-`rerender-list.sh` durchsucht den angegebenen Ordner nach beiden Archivarten: Profil-Archiven (`eml/` + `pdf/`) und Ordnern von `imaparc eml` (mit der `.eml` im Ordner). Jeder PDF-Ordner wird über sein Manifest der `.eml` zugeordnet — über den Hash der Rohdaten oder, bei Manifesten vor 26.8.12, über die Message-ID **und** den Text der PDF selbst (Absender, Datum, Betreff, Textanfang). Nie über den Namen. `rerender.txt` enthält die Ordner, die sicher neu entstehen können; `keep.txt` die übrigen mit Grund; `profiles.yaml` Render-Profile für Archive, die keine `profile.yaml` abdeckt. `rerender-apply.sh` prüft die Liste vor dem Verschieben erneut, fragt nach und verschiebt (`--move-to`, umkehrbar, unter dem Pfad relativ zu `~`) oder löscht (`--delete`). Bei `imaparc eml`-Ordnern holt es die `.eml` vorher heraus und legt sie daneben. Anschließend enthält `render.sh` genau die `imaparc`-Aufrufe, die das Beiseitegelegte neu erzeugen — mit bereinigten Namen.
+`rerender-list.sh` durchsucht den angegebenen Ordner nach PDF-Ordnern — in Profil-Archiven (`pdf/`, die `.eml` in `eml/` oder `eml-Archiv/`) und in Ordnern älterer `imaparc eml`-Versionen (mit der `.eml` im Ordner). Jeder PDF-Ordner wird über sein Manifest der `.eml` zugeordnet — über den Hash der Rohdaten oder, bei Manifesten vor 26.8.12, über die Message-ID **und** den Text der PDF selbst (Absender, Datum, Betreff, Textanfang). Nie über den Namen. `rerender.txt` enthält die Ordner, die sicher neu entstehen können; `keep.txt` die übrigen mit Grund; `loose.txt` jede sonstige `.eml` unterhalb des Ordners. `eml-Archiv/` und `pdf-Löscharchiv/` werden nie durchsucht. `rerender-apply.sh` prüft die Liste vor dem Verschieben erneut, fragt nach und verschiebt (`--move-to`, umkehrbar, unter dem Pfad relativ zu `~`) oder löscht (`--delete`). Bei Ordnern älterer `imaparc eml`-Versionen holt es die `.eml` vorher heraus und legt sie daneben. Anschließend ruft `render.sh` erst `imaparc render` für die Profile auf und dann `imaparc eml` für jede übrige `.eml` — alles landet so im Archiv unter `~/imapArc`, die `.eml` im `eml-Archiv`.
 
 ## Optionen
 
@@ -262,9 +265,11 @@ bash ~/rerender/render.sh                                          # erzeugt all
 | `render` | `--allow-remote-images` | Externe Bilder erzwingen (sonst pro Profil `remote_images`) |
 | `render` | `--jobs`, `-j` | Parallele Renderings |
 | `eml` | `[PFADE...]` | Dateien oder Verzeichnisse (Default: aktuelles Verzeichnis) |
-| `eml` | `--name`, `-n` | Namensteil in den erzeugten Dateinamen (Default `mail`) |
+| `eml` | `--profiles <pfad>` | `profile.yaml`, deren Regeln das Profil bestimmen (Default `~/.config/imaparc/profile.yaml`) |
+| `eml` | `--root <pfad>` | Archiv-Wurzel; Mails ohne passendes Profil landen in `00_Mails` (Default `~/imapArc`) |
+| `eml` | `--name`, `-n` | Namensteil für Mails ohne passendes Profil (Default `mail`) |
 | `eml` | `--jobs`, `-j` | Parallele Renderings |
-| `install-service` | `--name`, `-n` | Namensteil, den der Rechtsklick-Eintrag verwendet |
+| `install-service` | `--name`, `-n` | Namensteil für Mails ohne passendes Profil, den der Rechtsklick-Eintrag verwendet |
 | `doctor` | `--offline` | IMAP-Logins überspringen (kein Netzwerkzugriff) |
 | `verify` | `--profiles <pfad>` | `profile.yaml` mit den zu prüfenden Archiven |
 | `verify` | `--profile <name>` | Nur dieses eine Archiv prüfen |

@@ -67,15 +67,6 @@ class RunReport:
                 lines.append(f"  - {Path(path).name}")
             if len(self.non_compliant) > 10:
                 lines.append(f"  … and {len(self.non_compliant) - 10} more")
-            mailonly = [p for p in self.non_compliant if p.endswith("_mailonly.pdf")]
-            if mailonly:
-                # The combined PDF may carry an exotic attachment that resists
-                # conversion — that is accepted. A non-conformant *mail-only*
-                # rendition is imapArc's own output and should never happen.
-                lines.append(
-                    f"  ⚠ {len(mailonly)} of these are mail-only renditions "
-                    "(imapArc's own output) — this is an anomaly, please report."
-                )
         return "\n".join(lines)
 
 
@@ -84,16 +75,15 @@ def validate_pdfa(report: RunReport, tools: ToolPaths, progress: Progress) -> No
 
     Per-file validation starts a fresh JVM each time, which is unusably slow at
     scale (hundreds of mails → hundreds of JVM starts). Instead each veraPDF
-    process validates a whole chunk of files. Paths are deduplicated first — an
-    attachment-less mail's combined and mail-only PDFs are the same file.
+    process validates a whole chunk of files. Paths are deduplicated first.
     """
     seen: set[Path] = set()
     paths: list[Path] = []
     for result in report.written:
-        for pdf in (result.combined_pdf, result.mail_only_pdf):
-            if pdf is not None and pdf not in seen and pdf.exists():
-                seen.add(pdf)
-                paths.append(pdf)
+        pdf = result.combined_pdf
+        if pdf is not None and pdf not in seen and pdf.exists():
+            seen.add(pdf)
+            paths.append(pdf)
     if not paths:
         return
 

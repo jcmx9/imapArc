@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from imaparc.sources.deliver import deliver_eml
+from imaparc.sources.deliver import deliver_eml, file_away
 from imaparc.sources.eml import EmlSource
 from tests.mail_builder import build_mail
 
@@ -105,3 +105,53 @@ def test_identical_check_walks_the_disambiguated_chain(tmp_path: Path) -> None:
 
     assert again == second
     assert len(list(tmp_path.iterdir())) == 2
+
+
+# --- file_away ---------------------------------------------------------------
+
+
+def test_file_away_moves_the_mail_into_every_target(tmp_path: Path) -> None:
+    source = tmp_path / "in" / "x.eml"
+    source.parent.mkdir()
+    source.write_bytes(b"RAW")
+
+    paths = file_away(source, b"RAW", [(tmp_path / "a", "m"), (tmp_path / "b", "n")])
+
+    assert [p.read_bytes() for p in paths] == [b"RAW", b"RAW"]
+    assert [p.name for p in paths] == ["m.eml", "n.eml"]
+    assert not source.exists()
+
+
+def test_file_away_reuses_an_identical_archived_copy(tmp_path: Path) -> None:
+    deliver_eml(tmp_path / "arc", b"RAW", "m")
+    source = tmp_path / "x.eml"
+    source.write_bytes(b"RAW")
+
+    [path] = file_away(source, b"RAW", [(tmp_path / "arc", "m")])
+
+    assert path == tmp_path / "arc" / "m.eml"
+    assert sorted(p.name for p in (tmp_path / "arc").iterdir()) == ["m.eml"]
+    assert not source.exists()
+
+
+def test_file_away_never_deletes_the_archived_copy_itself(tmp_path: Path) -> None:
+    archived = deliver_eml(tmp_path / "arc", b"RAW", "m")
+
+    file_away(archived, b"RAW", [(tmp_path / "arc", "m")])
+
+    assert archived.read_bytes() == b"RAW"
+
+
+def test_file_away_keeps_a_source_that_changed_meanwhile(tmp_path: Path) -> None:
+    source = tmp_path / "x.eml"
+    source.write_bytes(b"NEWER")
+
+    file_away(source, b"RAW", [(tmp_path / "arc", "m")])
+
+    assert source.read_bytes() == b"NEWER"
+    assert (tmp_path / "arc" / "m.eml").read_bytes() == b"RAW"
+
+
+def test_file_away_tolerates_a_source_already_gone(tmp_path: Path) -> None:
+    [path] = file_away(tmp_path / "gone.eml", b"RAW", [(tmp_path / "arc", "m")])
+    assert path.read_bytes() == b"RAW"

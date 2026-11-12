@@ -38,8 +38,9 @@ PROFILE_HEADER = """\
 #
 # Each profile picks matching mail from one account into <output>/eml/, and
 # (when pdf: true) also renders to <output>/pdf/ — one folder per mail holding
-# <basename>.pdf (full: mail + attachment pages) plus, when there are
-# attachments, <basename>_mailonly.pdf and the original attachment files.
+# <basename>.pdf (mail + attachment pages, .eml embedded) and the original
+# attachment files. A rendered mail's .eml then moves on to eml-Archiv/<output
+# name>/ beside the profile directories.
 #
 # Required per profile: name, account, output. Everything else is optional and
 # shown commented below with its default — uncomment what you need. Add another

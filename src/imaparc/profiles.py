@@ -314,6 +314,41 @@ def attachments_match(required: list[str], attachment_names: list[str]) -> bool:
     )
 
 
+EML_ARCHIVE = "eml-Archiv"
+
+
+def archived_eml_dir(output: Path) -> Path:
+    """Where a profile's ``.eml`` files go once their PDF is written.
+
+    ``<output>/eml/`` is the inbox ``fetch`` delivers into; a rendered mail moves
+    on to ``<archive root>/eml-Archiv/<output name>/`` — beside the profiles, not
+    inside one, so the eml/ directories hold only what still waits for its PDF.
+    """
+    return output.parent / EML_ARCHIVE / output.name
+
+
+def eml_dirs(profile: Profile) -> tuple[Path, Path]:
+    """A profile's two ``.eml`` locations: the inbox and the archive."""
+    return profile.output / "eml", archived_eml_dir(profile.output)
+
+
+def matching_profiles(
+    profiles: list[Profile], parsed_headers: MailHeaders, attachment_names: list[str]
+) -> list[Profile]:
+    """Every profile whose header and attachment rules accept this mail.
+
+    The file-mode counterpart to fetch's per-profile check: ``folders`` only
+    applies to IMAP and is ignored; the date and address rules read the
+    headers, the ``attachments`` rule the parsed body.
+    """
+    return [
+        p
+        for p in profiles
+        if matches(p, parsed_headers)
+        and attachments_match(p.match.attachments, attachment_names)
+    ]
+
+
 def first_match(profiles: list[Profile], headers: MailHeaders) -> Profile | None:
     """Return the first profile whose content rules match, or None."""
     return next((p for p in profiles if matches(p, headers)), None)

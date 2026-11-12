@@ -5,6 +5,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Rendered mail moves to the `eml-Archiv`.** Once a mail's PDF folder exists,
+  `render` moves its `.eml` from `<profile>/eml/` to `eml-Archiv/<profile>/`
+  beside the profile directories (same file name), so `eml/` holds only what
+  still waits for its PDF. `fetch` (for server-side actions), `verify` and the
+  rerender scripts look in both places.
+- **`imaparc eml` files into the archive instead of rendering in place.** The
+  profile is derived from the mail's headers with the rules in `profile.yaml`
+  (folder rules ignored); a mail matching several profiles is filed into each,
+  one matching none into `<root>/00_Mails` (`--root`, default `~/imapArc`). The
+  PDF goes to `<profile>/pdf/<basename>/`, the `.eml` to `eml-Archiv/<profile>/`
+  — never deleted before every copy is written, and never "moved" onto itself.
+- **No more `_mailonly.pdf`.** Each mail folder holds one PDF (body and
+  attachment pages, `.eml` embedded) plus the original attachments.
+- **Rerender scripts**: `rerender-list.sh` writes `loose.txt` (every `.eml`
+  outside the configured inboxes) instead of generated render profiles, never
+  searches `eml-Archiv/` or `pdf-Löscharchiv/`, and finds a folder's proof in
+  either `.eml` location. `render.sh` runs `imaparc render`, then `imaparc eml`
+  for all remaining mail. `rerender-apply.sh --move-to` accepts a target beside
+  the profiles such as `~/imapArc/pdf-Löscharchiv`.
+
 ## [26.11.3] - 2026-11-12
 
 ### Added

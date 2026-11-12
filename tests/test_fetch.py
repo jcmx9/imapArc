@@ -295,6 +295,28 @@ def test_fetch_deletes_when_local_eml_present(tmp_path: Path) -> None:
     assert report.post_fetch_skipped == 0
 
 
+def test_fetch_deletes_when_the_eml_has_moved_to_the_archive(tmp_path: Path) -> None:
+    # Rendered mail moves from eml/ to eml-Archiv/<output name>/ — still a copy.
+    from imaparc.fetch import _basename_for, _fetch_folder
+    from imaparc.state import StateStore
+
+    msg = _kanzlei_msg(5)
+    profile = _delete_profile(tmp_path / "out")
+    archive = tmp_path / "eml-Archiv" / "out"
+    archive.mkdir(parents=True)
+    (archive / f"{_basename_for(profile, msg)}.eml").write_bytes(b"archived")
+
+    conn = _StubConn(msg)
+    state = StateStore(tmp_path / "state.db")
+    state.mark_delivered("a", "INBOX", 99, 5)
+    report = FetchReport()
+
+    _fetch_folder(conn, "a", "INBOX", [profile], state, report)
+
+    assert conn.deleted == [5]
+    assert report.post_fetch_skipped == 0
+
+
 def test_retry_guard_checks_recorded_filename_not_reconstructed(
     tmp_path: Path,
 ) -> None:

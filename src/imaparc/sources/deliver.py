@@ -64,3 +64,33 @@ def deliver_eml(eml_dir: Path, raw: bytes, basename: str) -> Path:
         path = write_readonly(eml_dir / f"{basename}.eml", raw)
     os.chmod(eml_dir, DIR_MODE)  # immutable at rest
     return path
+
+
+def file_away(source: Path, raw: bytes, targets: list[tuple[Path, str]]) -> list[Path]:
+    """Move a rendered mail's ``.eml`` into one or more archive directories.
+
+    ``raw`` is delivered to every ``(directory, basename)`` in ``targets`` first
+    (atomically, never overwriting, an identical copy reused — see
+    :func:`deliver_eml`); only once **all** copies exist is ``source`` removed.
+    An interruption therefore leaves an extra copy, never a missing one, and a
+    rerun completes the move.
+
+    ``source`` is kept when one of the delivered paths *is* ``source`` — a mail
+    rendered from where it is already archived would otherwise be deleted as its
+    own duplicate.
+
+    Returns:
+        The archived paths, one per target.
+    """
+    delivered = [deliver_eml(target, raw, name) for target, name in targets]
+    if not source.exists():
+        return delivered
+    origin = source.resolve()
+    if any(path.resolve() == origin for path in delivered):
+        return delivered
+    if source.read_bytes() != raw:
+        # Changed on disk since it was read: what was archived is not what is
+        # there now, so removing it could lose the newer content.
+        return delivered
+    source.unlink()
+    return delivered

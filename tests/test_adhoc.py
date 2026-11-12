@@ -1,19 +1,20 @@
-"""Tests for the profile-free ``eml`` command (ad-hoc rendering)."""
+"""Tests for the ``eml`` command (file mode into the profile archive)."""
 
 from __future__ import annotations
 
-import errno
-import os
-import shutil
+import contextlib
 import threading
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
 
-from imaparc.adhoc import collect_eml, move_into_folder, run_adhoc
+from imaparc.adhoc import collect_eml, run_adhoc
 from imaparc.config import ToolPaths
 from imaparc.exceptions import SourceError
+from imaparc.profiles import Match, Profile
+from imaparc.report import RunReport
 from tests.mail_builder import build_mail
 
 
@@ -83,118 +84,117 @@ def test_non_eml_file_argument_raises(tmp_path: Path) -> None:
         collect_eml([other])
 
 
-# --- move_into_folder ------------------------------------------------------
-
-
-def _folder(tmp_path: Path, name: str = "2026-03-23_02-18-04_mail_Test") -> Path:
-    """A rendered mail's output folder, as _store() would leave it."""
-    folder = tmp_path / name
-    folder.mkdir()
-    return folder
-
-
-def test_move_renames_eml_to_the_folder_name(tmp_path: Path) -> None:
-    mail = _eml(tmp_path / "Rechnung Juli.eml")
-    folder = _folder(tmp_path)
-
-    target = move_into_folder(mail, folder)
-
-    assert target == folder / f"{folder.name}.eml"
-    assert target.is_file()
-    assert not mail.exists()
-
-
-def test_moved_eml_is_read_only(tmp_path: Path) -> None:
-    mail = _eml(tmp_path / "a.eml")
-    mail.chmod(0o644)
-
-    target = move_into_folder(mail, _folder(tmp_path))
-
-    assert target is not None
-    assert target.stat().st_mode & 0o777 == 0o400
-
-
-def test_move_is_idempotent(tmp_path: Path) -> None:
-    """A second run finds nothing left to move and must not fail."""
-    mail = _eml(tmp_path / "a.eml")
-    folder = _folder(tmp_path)
-    first = move_into_folder(mail, folder)
-
-    assert move_into_folder(mail, folder) is None
-    assert first is not None
-    assert first.is_file()
-
-
-def test_move_does_not_clobber_a_same_named_attachment(tmp_path: Path) -> None:
-    mail = _eml(tmp_path / "a.eml")
-    folder = _folder(tmp_path)
-    attachment = folder / f"{folder.name}.eml"
-    attachment.write_bytes(b"an attachment that happens to be named like this")
-
-    target = move_into_folder(mail, folder)
-
-    assert target == folder / f"{folder.name}-2.eml"
-    assert attachment.read_bytes().startswith(b"an attachment")
-
-
-def test_move_works_across_filesystems(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A dragged .eml can sit in /var/folders while the target is elsewhere."""
-    mail = _eml(tmp_path / "a.eml")
-    folder = _folder(tmp_path)
-
-    def _cross_device(*args: object, **kwargs: object) -> None:
-        raise OSError(errno.EXDEV, "Cross-device link")
-
-    monkeypatch.setattr(os, "rename", _cross_device)
-
-    target = move_into_folder(mail, folder)
-
-    assert target is not None
-    assert target.is_file()
-    assert not mail.exists()
-
-
 # --- run_adhoc (end to end) ------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _restore_perms(tmp_path: Path) -> Iterator[None]:
+    yield
+    for entry in sorted(tmp_path.rglob("*"), reverse=True):
+        with contextlib.suppress(OSError):
+            entry.chmod(0o700)
+
+
+def _profile(name: str, root: Path, address: str) -> Profile:
+    return Profile(
+        name=name,
+        account="a",
+        output=root / name,
+        match=Match(addresses=[address]),
+    )
+
+
+async def _run(
+    files: list[Path],
+    root: Path,
+    profiles: list[Profile] | None = None,
+    name: str = "mail",
+    **kwargs: int,
+) -> RunReport:
+    return await run_adhoc(
+        files,
+        profiles=profiles or [],
+        root=root,
+        name=name,
+        tools=ToolPaths.resolve(),
+        **kwargs,
+    )
+
+
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-async def test_renders_into_a_folder_beside_the_eml(tmp_path: Path) -> None:
-    mail = _eml(tmp_path / "Rechnung.eml", subject="Rechnung Juli")
+async def test_unmatched_mail_is_filed_into_00_mails(tmp_path: Path) -> None:
+    mail = _eml(tmp_path / "in" / "Rechnung.eml", subject="Rechnung Juli")
+    root = tmp_path / "arc"
 
-    report = await run_adhoc([mail], name="mail", tools=ToolPaths.resolve())
+    report = await _run([mail], root)
 
-    assert len(report.written) == 1
-    folder = tmp_path / report.written[0].basename
-    assert folder.is_dir()
-    assert folder.name.endswith("_mail_Rechnung_Juli")
-    assert (folder / f"{folder.name}.pdf").is_file()
-
-
-@pytest.mark.requires_chromium
-@pytest.mark.requires_tools
-@pytest.mark.slow
-async def test_eml_ends_up_inside_the_rendered_folder(tmp_path: Path) -> None:
-    mail = _eml(tmp_path / "Rechnung.eml", subject="Rechnung Juli")
-
-    report = await run_adhoc([mail], name="mail", tools=ToolPaths.resolve())
-
-    folder = tmp_path / report.written[0].basename
-    assert (folder / f"{folder.name}.eml").is_file()
+    basename = report.written[0].basename
+    assert basename.endswith("_mail_Rechnung_Juli")
+    folder = root / "00_Mails" / "pdf" / basename
+    assert (folder / f"{basename}.pdf").is_file()
+    # The PDF exists, so the .eml moved on to the archive — and left the inbox.
+    archived = root / "eml-Archiv" / "00_Mails" / f"{basename}.eml"
+    assert archived.read_bytes() == build_mail(subject="Rechnung Juli")
     assert not mail.exists()
-    assert list(tmp_path.glob("*.eml")) == []
 
 
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-async def test_name_option_lands_in_the_basename(tmp_path: Path) -> None:
-    mail = _eml(tmp_path / "a.eml", subject="Rechnung")
+async def test_the_profile_is_derived_from_the_headers(tmp_path: Path) -> None:
+    root = tmp_path / "arc"
+    mail = tmp_path / "in" / "a.eml"
+    mail.parent.mkdir()
+    mail.write_bytes(build_mail(from_="amt@stadt.de", subject="Termin"))
+    profiles = [
+        _profile("Amt", root, "amt@stadt.de"),
+        _profile("Other", root, "x@y.de"),
+    ]
 
-    report = await run_adhoc([mail], name="hetzner", tools=ToolPaths.resolve())
+    report = await _run([mail], root, profiles)
+
+    basename = report.written[0].basename
+    assert "_Amt_" in basename
+    assert (root / "Amt" / "pdf" / basename).is_dir()
+    assert (root / "eml-Archiv" / "Amt" / f"{basename}.eml").is_file()
+    assert not (root / "Other").exists()
+    assert not (root / "00_Mails").exists()
+    assert not mail.exists()
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_a_mail_matching_two_profiles_is_filed_into_both(tmp_path: Path) -> None:
+    root = tmp_path / "arc"
+    mail = tmp_path / "in" / "a.eml"
+    mail.parent.mkdir()
+    raw = build_mail(from_="amt@stadt.de", to="anwalt@kanzlei.de", subject="Akte")
+    mail.write_bytes(raw)
+    profiles = [
+        _profile("Amt", root, "amt@stadt.de"),
+        _profile("Anwalt", root, "anwalt@kanzlei.de"),
+    ]
+
+    report = await _run([mail], root, profiles)
+
+    assert len(report.written) == 2
+    for name in ("Amt", "Anwalt"):
+        [archived] = (root / "eml-Archiv" / name).iterdir()
+        assert archived.read_bytes() == raw
+        assert (root / name / "pdf" / archived.stem).is_dir()
+    assert not mail.exists()
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_name_option_names_unmatched_mail(tmp_path: Path) -> None:
+    mail = _eml(tmp_path / "in" / "a.eml", subject="Rechnung")
+
+    report = await _run([mail], tmp_path / "arc", name="hetzner")
 
     assert "_hetzner_" in report.written[0].basename
 
@@ -202,14 +202,14 @@ async def test_name_option_lands_in_the_basename(tmp_path: Path) -> None:
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-async def test_parent_directory_permissions_are_left_alone(tmp_path: Path) -> None:
-    """The target is the user's own directory — never lock it down like an archive."""
+async def test_source_directory_permissions_are_left_alone(tmp_path: Path) -> None:
+    """The source is the user's own directory — never lock it down."""
     work = tmp_path / "desktop"
     work.mkdir(mode=0o755)
     before = work.stat().st_mode & 0o777
     mail = _eml(work / "a.eml")
 
-    await run_adhoc([mail], name="mail", tools=ToolPaths.resolve())
+    await _run([mail], tmp_path / "arc")
 
     assert work.stat().st_mode & 0o777 == before
 
@@ -217,38 +217,40 @@ async def test_parent_directory_permissions_are_left_alone(tmp_path: Path) -> No
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-async def test_rerun_skips_and_writes_nothing_new(tmp_path: Path) -> None:
-    mail = _eml(tmp_path / "a.eml")
-    first = await run_adhoc([mail], name="mail", tools=ToolPaths.resolve())
-    folder = tmp_path / first.written[0].basename
-    before = sorted(p.name for p in folder.iterdir())
+async def test_a_second_copy_is_archived_without_a_second_folder(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "arc"
+    first = await _run([_eml(tmp_path / "in" / "a.eml")], root)
+    pdf_dir = root / "00_Mails" / "pdf"
+    before = sorted(p.name for p in pdf_dir.iterdir())
 
-    second = await run_adhoc(
-        collect_eml([tmp_path]), name="mail", tools=ToolPaths.resolve()
-    )
+    again = _eml(tmp_path / "elsewhere" / "copy.eml")
+    second = await _run([again], root)
 
     assert second.written == []
-    assert sorted(p.name for p in folder.iterdir()) == before
+    assert second.skipped
+    assert sorted(p.name for p in pdf_dir.iterdir()) == before
+    # The identical bytes are already archived: reused, and the copy is gone.
+    archived = list((root / "eml-Archiv" / "00_Mails").iterdir())
+    assert [p.stem for p in archived] == [first.written[0].basename]
+    assert not again.exists()
 
 
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-async def test_interrupted_run_gets_its_eml_moved_on_the_next_run(
+async def test_a_mail_rendered_from_the_archive_is_not_deleted(
     tmp_path: Path,
 ) -> None:
-    """Rendered folder present, .eml still outside — the next run repairs it."""
-    mail = _eml(tmp_path / "a.eml")
-    first = await run_adhoc([mail], name="mail", tools=ToolPaths.resolve())
-    folder = tmp_path / first.written[0].basename
-    stray = folder / f"{folder.name}.eml"
-    stray.chmod(0o600)
-    shutil.move(str(stray), str(tmp_path / "a.eml"))
+    """Archiving a file onto itself must not count it as its own duplicate."""
+    root = tmp_path / "arc"
+    first = await _run([_eml(tmp_path / "in" / "a.eml")], root)
+    archived = root / "eml-Archiv" / "00_Mails" / f"{first.written[0].basename}.eml"
 
-    await run_adhoc([tmp_path / "a.eml"], name="mail", tools=ToolPaths.resolve())
+    await _run([archived], root)
 
-    assert (folder / f"{folder.name}.eml").is_file()
-    assert not (tmp_path / "a.eml").exists()
+    assert archived.is_file()
 
 
 @pytest.mark.requires_chromium
@@ -257,14 +259,13 @@ async def test_interrupted_run_gets_its_eml_moved_on_the_next_run(
 async def test_an_unreadable_mail_does_not_abort_the_run(tmp_path: Path) -> None:
     """Note: garbage bytes will NOT do here — the email parser accepts anything
     and renders it as a text mail. An unreadable file is a real failure path."""
-    unreadable = _eml(tmp_path / "aa-unreadable.eml")
+    inbox = tmp_path / "in"
+    unreadable = _eml(inbox / "aa-unreadable.eml")
     unreadable.chmod(0o000)
-    good = _eml(tmp_path / "zz-good.eml", subject="Good One")
+    good = _eml(inbox / "zz-good.eml", subject="Good One")
 
     try:
-        report = await run_adhoc(
-            collect_eml([tmp_path]), name="mail", tools=ToolPaths.resolve()
-        )
+        report = await _run(collect_eml([inbox]), tmp_path / "arc")
     finally:
         unreadable.chmod(0o600)
 
@@ -320,7 +321,7 @@ async def test_remote_images_are_always_loaded(tmp_path: Path) -> None:
                 ),
             )
         )
-        await run_adhoc([mail], name="mail", tools=ToolPaths.resolve())
+        await _run([mail], tmp_path / "arc")
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -370,13 +371,8 @@ async def test_ghostscript_runs_are_capped_below_jobs(
     for i in range(6):
         _eml(tmp_path / f"m{i}.eml", subject=f"Mail {i}")
 
-    await run_adhoc(
-        collect_eml([tmp_path]),
-        name="mail",
-        tools=ToolPaths.resolve(),
-        jobs=6,
-        gs_jobs=2,
-        verbosity=0,
+    await _run(
+        collect_eml([tmp_path]), tmp_path / "arc", jobs=6, gs_jobs=2, verbosity=0
     )
 
     assert peak <= 2, f"{peak} Ghostscript runs at once, gs_jobs was 2"
@@ -390,17 +386,17 @@ async def test_two_copies_of_one_mail_produce_one_folder(tmp_path: Path) -> None
 
     Happens without any user error: Gmail lists a message in All Mail *and* in
     its label folder (two UIDs), and a mail uploaded back to the server returns
-    with a fresh UID. Both deliver the same mail twice into one render run.
+    with a fresh UID.
     """
+    inbox = tmp_path / "in"
+    inbox.mkdir()
     body = build_mail(subject="Az 4711", message_id="<the-same@example.com>")
-    (tmp_path / "copy-a.eml").write_bytes(body)
-    (tmp_path / "copy-b.eml").write_bytes(body)
+    (inbox / "copy-a.eml").write_bytes(body)
+    (inbox / "copy-b.eml").write_bytes(body)
 
-    report = await run_adhoc(
-        collect_eml([tmp_path]), name="mail", tools=ToolPaths.resolve(), verbosity=0
-    )
+    report = await _run(collect_eml([inbox]), tmp_path / "arc", verbosity=0)
 
-    folders = [p for p in tmp_path.iterdir() if p.is_dir()]
+    folders = list((tmp_path / "arc" / "00_Mails" / "pdf").iterdir())
     assert len(folders) == 1, f"one mail became {len(folders)} folders: {folders}"
     assert len(report.written) == 1
     assert len(report.skipped) == 1

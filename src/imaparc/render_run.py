@@ -23,9 +23,10 @@ from imaparc.console import make_progress
 from imaparc.exceptions import ImapArcError
 from imaparc.mail.parser import parse_mail
 from imaparc.pipeline import ArchiveIndex, RenderResult, render_mail, sweep_staging
-from imaparc.profiles import Profile
+from imaparc.profiles import Profile, archived_eml_dir
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
+from imaparc.sources.deliver import file_away
 from imaparc.sources.eml import EmlSource
 from imaparc.storage import DIR_MODE, make_dir
 
@@ -125,7 +126,12 @@ async def _render_profile(
     progress: Progress,
     task: TaskID,
 ) -> None:
-    """Render every mail in one profile's ``eml/`` into its ``pdf/`` directory."""
+    """Render every mail in one profile's ``eml/`` into its ``pdf/`` directory.
+
+    A mail whose folder exists afterwards — rendered now, or found already
+    rendered — has its ``.eml`` moved on to the profile's ``eml-Archiv``
+    directory under its own file name, so ``eml/`` holds only what still waits.
+    """
     make_dir(output)
     os.chmod(output, 0o700)  # owner-writable, private (same as DIR_MODE at rest)
     sweep_staging(output)  # clear any .staging-* left by a previously aborted run
@@ -137,6 +143,7 @@ async def _render_profile(
     # What is already archived, by manifest: a mail stored under an older naming
     # scheme is recognised instead of being rendered again under its new name.
     existing = ArchiveIndex.scan(output)
+    archive_dir = archived_eml_dir(profile.output)
 
     async def process(path: Path) -> RenderResult | None:
         async with semaphore:
@@ -175,6 +182,12 @@ async def _render_profile(
                         len(parsed.attachments),
                         "" if result.complete else ", some kept as originals",
                     )
+                # Rendered (now or earlier): the .eml leaves the inbox for the
+                # archive. Only once the folder exists — a copy whose twin is
+                # still rendering concurrently waits for the next run.
+                if (output / result.basename).is_dir():
+                    archived = file_away(path, raw, [(archive_dir, path.stem)])
+                    logger.debug("  archived %s → %s", path.name, archived[0])
                 return result
             except (ImapArcError, OSError) as exc:
                 # One bad mail must not abort the whole profile's render.

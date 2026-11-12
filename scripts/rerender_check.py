@@ -4,13 +4,13 @@ Called by ``rerender-list.sh`` and ``rerender-apply.sh``; not part of the
 ``imaparc`` command. Two kinds of archive are found by their
 ``.imaparc-manifest`` files:
 
-- **profile** archives — ``<profile>/eml/*.eml`` beside ``<profile>/pdf/<mail>/``
-  (``imaparc fetch`` + ``render``);
-- **eml** folders — ``<dir>/<mail>/`` holding its own ``.eml``
-  (``imaparc eml``).
+- **profile** archives — ``<profile>/pdf/<mail>/`` with the ``.eml`` in
+  ``<profile>/eml/`` or, once rendered, ``eml-Archiv/<profile>/`` beside it;
+- **eml** folders — ``<dir>/<mail>/`` holding its own ``.eml`` (``imaparc
+  eml`` before 26.11.4).
 
 A folder qualifies only when its mail provably still exists as ``.eml`` — in
-the profile's ``eml/``, or inside the folder itself:
+one of the profile's two ``.eml`` directories, or inside the folder itself:
 
 - **hash** — the manifest (26.8.12+) records ``sha256:`` of the raw mail, and a
   ``.eml`` with exactly those bytes exists. Nothing else is consulted.
@@ -30,7 +30,8 @@ Usage::
 
 ``list`` writes to OUT_DIR: ``rerender.txt`` (one folder per line),
 ``keep.txt`` (``REASON<TAB>FOLDER``), ``archives.tsv`` (what was found) and
-``profiles.yaml`` (render profiles for archives not in ``--config``).
+``loose.txt`` (every ``.eml`` outside the inboxes of the ``--config`` profiles,
+for ``imaparc eml`` to file into the archive).
 ``recheck`` re-validates a list right before it is applied and prints
 ``profile<TAB>FOLDER`` or ``eml<TAB>FOLDER<TAB>EML`` per verified folder;
 rejected ones go to stderr. ``commands`` turns OUT_DIR/applied.tsv into
@@ -45,6 +46,7 @@ import re
 import shlex
 import subprocess
 import sys
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,14 +55,20 @@ from imaparc.exceptions import ImapArcError, ParseError
 from imaparc.html.to_text import html_to_text
 from imaparc.mail.models import ParsedMail
 from imaparc.mail.parser import parse_mail
-from imaparc.profiles import load_profiles
+from imaparc.profiles import EML_ARCHIVE, archived_eml_dir, load_profiles
 
 MANIFEST = ".imaparc-manifest"
 HASH_PREFIX = "sha256:"
 DEFAULT_CONFIG = Path.home() / ".config" / "imaparc" / "profile.yaml"
 
-# Never searched: macOS caches and the trash. Dot-directories are skipped too.
-_SKIP_NAMES = frozenset({"Library", ".Trash"})
+# Never searched: macOS caches, the trash, the eml-Archiv (rendered mail, not
+# loose) and the pdf-Löscharchiv (folders already set aside — finding them again
+# would offer them a second time). Dot-directories are skipped too.
+PDF_SET_ASIDE = "pdf-Löscharchiv"
+_SKIP_NAMES = frozenset(
+    unicodedata.normalize("NFC", n)
+    for n in ("Library", ".Trash", EML_ARCHIVE, PDF_SET_ASIDE)
+)
 
 # Pages of the PDF searched for the mail's text. The header block and the start
 # of the body sit on the first pages of every rendition.
@@ -138,6 +146,14 @@ def _emls_in(directory: Path) -> list[Path]:
     return [p for p in directory.glob("*.eml") if p.is_file()]
 
 
+def _profile_emls(profile_dir: Path) -> list[Path]:
+    """A profile's mail: the ``eml/`` inbox and its ``eml-Archiv`` directory."""
+    return [
+        *_emls_in(profile_dir / "eml"),
+        *_emls_in(archived_eml_dir(profile_dir)),
+    ]
+
+
 # The header date as PDFs without a manifest hash (before 26.8.12) print it.
 # Fixed here rather than taken from imaparc.humanize, whose format has changed
 # since (26.11.3) — only those old PDFs ever reach the content check.
@@ -213,7 +229,9 @@ def verdict(folder: Path, mails: _Mails) -> tuple[str, Path | None]:
 def _kind(folder: Path) -> str:
     """``profile`` for ``<profile>/pdf/<mail>/``, else ``eml`` (an adhoc folder)."""
     parent = folder.parent
-    if parent.name == "pdf" and (parent.parent / "eml").is_dir():
+    if parent.name == "pdf" and (
+        (parent.parent / "eml").is_dir() or archived_eml_dir(parent.parent).is_dir()
+    ):
         return "profile"
     return "eml"
 
@@ -253,23 +271,35 @@ def _configured_outputs(config: Path) -> set[Path]:
     return {p.output.expanduser().resolve() for p in profiles}
 
 
-def discover(root: Path, excludes: list[Path], config: Path) -> list[Archive]:
-    """Every archive under ``root`` holding at least one manifest."""
+def discover(
+    root: Path, excludes: list[Path], config: Path
+) -> tuple[list[Archive], list[Path]]:
+    """Every archive under ``root`` holding a manifest, and every loose ``.eml``.
+
+    *Loose* is any ``.eml`` that is not in a mail folder (where it is the
+    folder's own mail or an attachment) and not in the ``eml/`` inbox of a
+    profile from ``config`` — ``imaparc render`` takes care of those.
+    """
     # Compared as given *and* resolved, so the walk never has to resolve each of
     # the many thousand directories below a home directory (that is slow).
     skip = {str(e.absolute()) for e in excludes} | {str(e.resolve()) for e in excludes}
+    configured = _configured_outputs(config)
+    inboxes = {str(o / "eml") for o in configured}
     profile_dirs: set[Path] = set()
     eml_dirs: set[Path] = set()
+    loose: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         here = Path(dirpath)
         dirnames[:] = [
             d
             for d in dirnames
             if not d.startswith(".")
-            and d not in _SKIP_NAMES
+            and unicodedata.normalize("NFC", d) not in _SKIP_NAMES
             and os.path.join(dirpath, d) not in skip
         ]
         if MANIFEST not in filenames:
+            if dirpath not in inboxes and str(here.resolve()) not in inboxes:
+                loose.extend(here / f for f in sorted(filenames) if f.endswith(".eml"))
             continue
         dirnames[:] = []  # a mail folder holds only the mail's own files
         if _kind(here) == "profile":
@@ -277,7 +307,6 @@ def discover(root: Path, excludes: list[Path], config: Path) -> list[Archive]:
         else:
             eml_dirs.add(here.parent)
 
-    configured = _configured_outputs(config)
     archives: list[Archive] = []
     for path in sorted(profile_dirs):
         folders = sorted(p for p in (path / "pdf").iterdir() if p.is_dir())
@@ -292,40 +321,19 @@ def discover(root: Path, excludes: list[Path], config: Path) -> list[Archive]:
     for path in sorted(eml_dirs):
         folders = sorted(p for p in path.iterdir() if p.is_dir())
         archives.append(Archive("eml", path, _segment(folders, "mail"), False))
-    return archives
+    return archives, sorted(loose)
 
 
 def _verdicts(archive: Archive) -> list[tuple[Path, str, Path | None]]:
     if archive.kind == "profile":
-        mails = _Mails.load(_emls_in(archive.path / "eml"))
+        mails = _Mails.load(_profile_emls(archive.path))
         return [(f, *verdict(f, mails)) for f in archive.folders()]
     return [(f, *verdict(f, _Mails.load(_emls_in(f)))) for f in archive.folders()]
 
 
-def _profiles_yaml(archives: list[Archive]) -> str:
-    lines = [
-        "# Render profiles for the archives below that no profile.yaml covers.",
-        "# Written by scripts/rerender_check.py; used by render.sh.",
-        "profiles:",
-    ]
-    for a in archives:
-        if a.kind != "profile" or a.configured:
-            continue
-        lines += [
-            f"  - name: {a.name}",
-            "    account: rerender  # not used by render",
-            f"    output: {a.path}",
-            "    pdf: true",
-            "    remote_images: true",
-        ]
-    if lines[-1] == "profiles:":
-        lines[-1] = "profiles: []"
-    return "\n".join(lines) + "\n"
-
-
 def _list(root: Path, out_dir: Path, excludes: list[Path], config: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
-    archives = discover(root, [*excludes, out_dir], config)
+    archives, loose = discover(root, [*excludes, out_dir], config)
     rerender_lines: list[str] = []
     keep_lines: list[str] = []
     for archive in archives:
@@ -348,9 +356,10 @@ def _list(root: Path, out_dir: Path, excludes: list[Path], config: Path) -> int:
         "archives.tsv",
         [f"{a.kind}\t{a.path}\t{a.name}\t{int(a.configured)}" for a in archives],
     )
-    (out_dir / "profiles.yaml").write_text(_profiles_yaml(archives), encoding="utf-8")
+    write("loose.txt", [str(p) for p in loose])
     print(f"\n{len(rerender_lines)} folders -> {out_dir / 'rerender.txt'}")
     print(f"{len(keep_lines)} folders -> {out_dir / 'keep.txt'}")
+    print(f"{len(loose)} loose .eml -> {out_dir / 'loose.txt'}")
     return 0
 
 
@@ -367,7 +376,7 @@ def _recheck(listing: Path) -> int:
         elif kind == "profile":
             profile_dir = folder.parent.parent
             if profile_dir not in profiles:
-                profiles[profile_dir] = _Mails.load(_emls_in(profile_dir / "eml"))
+                profiles[profile_dir] = _Mails.load(_profile_emls(profile_dir))
             result, eml = verdict(folder, profiles[profile_dir])
         else:
             result, eml = verdict(folder, _Mails.load(_emls_in(folder)))
@@ -382,54 +391,39 @@ def _recheck(listing: Path) -> int:
 
 
 def _commands(out_dir: Path) -> int:
-    """Write render.sh: exactly the imaparc calls that rebuild what was applied."""
-    archives = {}
-    for row in (out_dir / "archives.tsv").read_text(encoding="utf-8").splitlines():
-        kind, path, name, configured = row.split("\t")
-        archives[Path(path)] = Archive(kind, Path(path), name, configured == "1")
+    """Write render.sh: the imaparc calls that rebuild and file everything.
 
-    configured_run = generated_run = False
-    loose: dict[Path, list[str]] = defaultdict(list)
+    ``imaparc render`` renders the inboxes of the configured profiles and moves
+    each rendered ``.eml`` to its ``eml-Archiv``. Every other ``.eml`` — loose
+    in ``loose.txt``, or taken out of an ``imaparc eml`` folder by the apply
+    step — goes through ``imaparc eml``, which derives its profile from its
+    headers and files it the same way.
+    """
+    files: list[str] = []
+    loose = out_dir / "loose.txt"
+    if loose.exists():
+        files += [x for x in loose.read_text(encoding="utf-8").splitlines() if x]
     applied = out_dir / "applied.tsv"
     rows = applied.read_text(encoding="utf-8").splitlines() if applied.exists() else []
-    for row in rows:
-        kind, path = row.split("\t", 1)
-        if kind == "profile":
-            archive = archives.get(Path(path).parent.parent)
-            if archive is None or archive.configured:
-                configured_run = True
-            else:
-                generated_run = True
-        else:
-            loose[Path(path).parent].append(path)
+    files += [path for kind, path in (r.split("\t", 1) for r in rows) if kind == "eml"]
 
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
-        "# Renders the given .eml files that still lie loose. imaparc eml files each",
-        "# one into its new folder, so a second run of this script finds nothing",
-        "# left to do instead of failing on a missing path.",
-        "eml_if_present() {",
-        '    local name="$1" f',
-        "    local files=()",
-        "    shift",
-        '    for f in "$@"; do [[ -e "${f}" ]] && files+=("${f}"); done',
-        '    [[ ${#files[@]} -eq 0 ]] || imaparc eml --name "${name}" "${files[@]}"',
-        "}",
+        "# 1. The configured profiles: render their eml/ inboxes, then archive.",
+        "imaparc render",
         "",
+        "# 2. Every other .eml: profile from its headers, same archive.",
+        "# Files already filed away by an earlier run are gone and skipped, so",
+        "# this script can simply be run again after an interruption.",
+        "files=()",
+        'add() { if [[ -e "$1" ]]; then files+=("$1"); fi; }',
+        *(f"add {shlex.quote(f)}" for f in dict.fromkeys(files)),
+        "if [[ ${#files[@]} -gt 0 ]]; then",
+        "    printf '%s\\0' \"${files[@]}\" | xargs -0 imaparc eml",
+        "fi",
     ]
-    if configured_run:
-        lines.append("imaparc render")
-    if generated_run:
-        lines.append(
-            f"imaparc render --profiles {shlex.quote(str(out_dir / 'profiles.yaml'))}"
-        )
-    for directory, files in sorted(loose.items()):
-        archive = archives.get(directory)
-        name = archive.name if archive else "mail"
-        quoted = " ".join(shlex.quote(f) for f in sorted(files))
-        lines.append(f"eml_if_present {shlex.quote(name)} {quoted}")
     script = out_dir / "render.sh"
     script.write_text("\n".join(lines) + "\n", encoding="utf-8")
     script.chmod(0o755)

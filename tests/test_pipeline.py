@@ -15,7 +15,6 @@ import pytest
 from imaparc.config import RunConfig, ToolPaths
 from imaparc.mail.parser import parse_mail
 from imaparc.pdf import provenance
-from imaparc.pdf.validate import run_verapdf
 from imaparc.pipeline import ArchiveIndex, _resolve_output, _store, render_mail
 from imaparc.render.browser import BrowserPool
 from tests.mail_builder import build_mail
@@ -47,40 +46,27 @@ def _mode(path: Path) -> int:
 # --- _store (no browser) ----------------------------------------------------
 
 
-def test_store_attachment_mail_has_full_and_mailonly_pdf(tmp_path: Path) -> None:
+def test_store_writes_one_pdf_and_the_originals(tmp_path: Path) -> None:
     _store(
         tmp_path,
         "m-1",
         identity="id-1",
-        primary_pdfa=b"FULL",
-        mailonly_pdfa=b"MAILONLY",
+        pdfa=b"FULL",
         originals=[("a.pdf", b"x"), ("a.pdf", b"y")],
     )
     sub = tmp_path / "m-1"
     # No loose PDF at the root — the mail's PDF lives only inside its folder.
     assert not (tmp_path / "m-1.pdf").exists()
-    # <basename>.pdf is the full PDF (mail + attachments); mailonly sits alongside.
     assert (sub / "m-1.pdf").read_bytes() == b"FULL"
-    assert (sub / "m-1_mailonly.pdf").read_bytes() == b"MAILONLY"
     # Two same-named attachments: the second is disambiguated, neither lost.
     assert (sub / "a.pdf").read_bytes() == b"x"
     assert (sub / "a-2.pdf").read_bytes() == b"y"
-
-
-def test_store_attachmentless_mail_has_only_mail_pdf(tmp_path: Path) -> None:
-    _store(
-        tmp_path,
-        "m-1",
-        identity="id-1",
-        primary_pdfa=b"MAILONLY",
-        mailonly_pdfa=None,
-        originals=[],
-    )
-    sub = tmp_path / "m-1"
-    # A folder with just the one PDF — no _mailonly duplicate, no originals.
-    assert (sub / "m-1.pdf").read_bytes() == b"MAILONLY"
-    assert not (sub / "m-1_mailonly.pdf").exists()
-    assert sorted(p.name for p in sub.iterdir()) == [".imaparc-manifest", "m-1.pdf"]
+    assert sorted(p.name for p in sub.iterdir()) == [
+        ".imaparc-manifest",
+        "a-2.pdf",
+        "a.pdf",
+        "m-1.pdf",
+    ]
 
 
 def test_store_sets_archive_permissions(tmp_path: Path) -> None:
@@ -88,8 +74,7 @@ def test_store_sets_archive_permissions(tmp_path: Path) -> None:
         tmp_path,
         "m-1",
         identity="id-1",
-        primary_pdfa=b"F",
-        mailonly_pdfa=b"M",
+        pdfa=b"F",
         originals=[("a.bin", b"x")],
     )
     assert _mode(tmp_path / "m-1") == 0o700
@@ -97,19 +82,18 @@ def test_store_sets_archive_permissions(tmp_path: Path) -> None:
     assert _mode(tmp_path / "m-1" / "a.bin") == 0o400
 
 
-def test_store_reserved_pdf_names_win_over_attachments(tmp_path: Path) -> None:
-    # An attachment literally named like our reserved PDFs must not clobber them.
+def test_store_reserved_pdf_name_wins_over_attachments(tmp_path: Path) -> None:
+    # An attachment literally named like the mail's PDF must not clobber it.
     _store(
         tmp_path,
         "m-1",
         identity="id-1",
-        primary_pdfa=b"FULL",
-        mailonly_pdfa=b"MAILONLY",
-        originals=[("m-1_mailonly.pdf", b"ATTACH")],
+        pdfa=b"FULL",
+        originals=[("m-1.pdf", b"ATTACH")],
     )
     sub = tmp_path / "m-1"
-    assert (sub / "m-1_mailonly.pdf").read_bytes() == b"MAILONLY"
-    assert (sub / "m-1_mailonly-2.pdf").read_bytes() == b"ATTACH"
+    assert (sub / "m-1.pdf").read_bytes() == b"FULL"
+    assert (sub / "m-1-2.pdf").read_bytes() == b"ATTACH"
 
 
 def test_store_strips_path_traversal(tmp_path: Path) -> None:
@@ -117,8 +101,7 @@ def test_store_strips_path_traversal(tmp_path: Path) -> None:
         tmp_path,
         "m-1",
         identity="id-1",
-        primary_pdfa=b"F",
-        mailonly_pdfa=b"M",
+        pdfa=b"F",
         originals=[("../../evil.sh", b"x")],
     )
     # The name is reduced to its basename; nothing escapes the subfolder.
@@ -131,8 +114,7 @@ def test_store_no_staging_left_behind(tmp_path: Path) -> None:
         tmp_path,
         "m-1",
         identity="id-1",
-        primary_pdfa=b"M",
-        mailonly_pdfa=None,
+        pdfa=b"M",
         originals=[],
     )
     assert not any(p.name.startswith(".staging") for p in tmp_path.iterdir())
@@ -146,8 +128,7 @@ def test_resolve_output_skips_fully_rendered_same_mail(tmp_path: Path) -> None:
         tmp_path,
         "m",
         identity="id-a",
-        primary_pdfa=b"M",
-        mailonly_pdfa=None,
+        pdfa=b"M",
         originals=[],
     )
     name, skip = _resolve_output(tmp_path, "m", "id-a")
@@ -159,8 +140,7 @@ def _archived(tmp_path: Path, name: str, identity: str) -> None:
         tmp_path,
         name,
         identity=identity,
-        primary_pdfa=b"M",
-        mailonly_pdfa=None,
+        pdfa=b"M",
         originals=[],
     )
 
@@ -238,8 +218,7 @@ def test_resolve_output_disambiguates_different_mail(tmp_path: Path) -> None:
         tmp_path,
         "m",
         identity="id-a",
-        primary_pdfa=b"M",
-        mailonly_pdfa=None,
+        pdfa=b"M",
         originals=[],
     )
     # A distinct mail that would collide on the basename gets its own slot.
@@ -288,32 +267,23 @@ async def test_render_mail_end_to_end(tmp_path: Path) -> None:
     assert outcomes["doc.pdf"] is True
     assert outcomes["report.docx"] is False
 
-    # Output tree: a per-mail folder with the full PDF (<basename>.pdf), the
-    # mail-only PDF (<basename>_mailonly.pdf), and both originals. Nothing loose
-    # at the root.
+    # Output tree: a per-mail folder with the one PDF (<basename>.pdf) and both
+    # originals. Nothing loose at the root, no _mailonly.pdf any more.
     sub = tmp_path / result.basename
     assert not (tmp_path / f"{result.basename}.pdf").exists()
     assert result.combined_pdf == sub / f"{result.basename}.pdf"
     assert result.combined_pdf is not None and result.combined_pdf.exists()
-    assert result.mail_only_pdf is not None
-    assert result.mail_only_pdf == sub / f"{result.basename}_mailonly.pdf"
-    assert result.mail_only_pdf.exists()
+    assert not (sub / f"{result.basename}_mailonly.pdf").exists()
     assert (sub / "doc.pdf").exists()
     assert (sub / "report.docx").read_bytes() == b"PK\x03\x04 not really a docx"
 
-    # Mail-only PDF is PDF/A-3b conformant (no foreign PDF merged in).
-    assert run_verapdf(tools.verapdf, result.mail_only_pdf).compliant
-
-    # Both PDFs name their mail by the manifest's hash; only the full PDF also
-    # carries the .eml itself.
+    # The PDF names its mail by the manifest's hash and carries the .eml.
     manifest_hash = (sub / ".imaparc-manifest").read_text().splitlines()[1]
-    for pdf in (result.combined_pdf, result.mail_only_pdf):
-        recorded = provenance.read(pdf.read_bytes())
-        assert recorded is not None
-        assert f"sha256:{recorded.sha256}" == manifest_hash
-        assert recorded.message_id == parsed.headers.message_id
+    recorded = provenance.read(result.combined_pdf.read_bytes())
+    assert recorded is not None
+    assert f"sha256:{recorded.sha256}" == manifest_hash
+    assert recorded.message_id == parsed.headers.message_id
     assert provenance.embedded_source(result.combined_pdf.read_bytes()) == raw
-    assert provenance.embedded_source(result.mail_only_pdf.read_bytes()) is None
 
 
 @pytest.mark.requires_chromium
@@ -331,11 +301,9 @@ async def test_render_mail_is_idempotent(tmp_path: Path) -> None:
         )
     assert first.written and not first.skipped
     assert second.skipped and not second.written
-    # No attachments → a folder holding only <basename>.pdf; the full and
-    # mail-only paths coincide, and there is no separate _mailonly file.
+    # No attachments → a folder holding only <basename>.pdf.
     sub = tmp_path / first.basename
     assert first.combined_pdf == sub / f"{first.basename}.pdf"
-    assert first.mail_only_pdf == sub / f"{first.basename}.pdf"
     assert not (sub / f"{first.basename}_mailonly.pdf").exists()
     assert sorted(p.name for p in sub.iterdir()) == [
         ".imaparc-manifest",
