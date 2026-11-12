@@ -135,7 +135,8 @@ def read(source: bytes | Path) -> Provenance | None:
     """
     try:
         pdf = pikepdf.open(io.BytesIO(source) if isinstance(source, bytes) else source)
-    except (pikepdf.PdfError, OSError):
+    except (pikepdf.PdfError, pikepdf.PasswordError, OSError):
+        # Unreadable or password-protected: certainly not one of imapArc's.
         return None
     with pdf:
         if "/Metadata" not in pdf.Root:

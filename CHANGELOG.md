@@ -5,6 +5,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **A password-protected PDF in a profile directory no longer aborts `render`,
+  `eml` or `verify`.** Reading a PDF's identity raised on encrypted files; such
+  a file now simply counts as not imapArc's.
+
 ## [26.11.7] - 2026-11-12
 
 ### Fixed

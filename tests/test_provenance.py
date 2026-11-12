@@ -32,6 +32,18 @@ def test_a_plain_pdf_records_nothing() -> None:
     assert provenance.embedded_source(pdf) is None
 
 
+def test_an_encrypted_or_broken_pdf_records_nothing() -> None:
+    """A foreign PDF in a profile directory must not abort indexing it."""
+    doc = pikepdf.Pdf.new()
+    doc.add_blank_page()
+    out = io.BytesIO()
+    doc.save(out, encryption=pikepdf.Encryption(owner="o", user="secret"))
+
+    assert provenance.read(out.getvalue()) is None
+    assert provenance.identity(out.getvalue()) is None
+    assert provenance.read(b"not a pdf at all") is None
+
+
 def test_stamp_records_hash_and_message_id() -> None:
     raw = build_mail(subject="Hi", text="body")
     stamped = provenance.stamp(_pdf(), raw, message_id="<id@x>")
