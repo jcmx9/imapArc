@@ -2,7 +2,7 @@
 
 > Archiviert E-Mails als Original (`.eml`) und als eine durchsuchbare PDF/A pro Mail — aus IMAP-Postfächern oder aus einzelnen Dateien.
 
-[Sprache: **Deutsch** | [English](README.en.md)] · Version `26.11.11`
+[Sprache: **Deutsch** | [English](README.en.md)] · Version `26.11.12`
 
 [![CI](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml/badge.svg)](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

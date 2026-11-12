@@ -2,7 +2,7 @@
 
 > Archives e-mail as the original (`.eml`) and as one searchable PDF/A per mail — from IMAP mailboxes or from single files.
 
-[Language: [Deutsch](README.md) | **English**] · Version `26.11.11`
+[Language: [Deutsch](README.md) | **English**] · Version `26.11.12`
 
 [![CI](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml/badge.svg)](https://github.com/jcmx9/imapArc/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
