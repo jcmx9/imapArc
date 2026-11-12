@@ -492,17 +492,28 @@ def _commands(out_dir: Path, inbox: Path) -> int:
         + " "
         + shlex.quote(str(inbox)),
     ]
+    # Archives no profile.yaml covers (00_Mails, say) keep their mail in an
+    # eml-Archiv directory that `imaparc render` never reads; file mode does.
+    unconfigured: list[Path] = []
+    tsv = out_dir / "archives.tsv"
+    for row in tsv.read_text(encoding="utf-8").splitlines() if tsv.exists() else []:
+        kind, path, _name, configured = row.split("\t")
+        directory = archived_eml_dir(Path(path))
+        if kind in ("profile", "flat") and configured == "0" and directory.is_dir():
+            unconfigured.append(directory)
     render = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
-        "# 1. The configured profiles: render their eml/ inboxes, then archive.",
+        "# 1. The configured profiles: render their mail, then archive.",
         "imaparc render",
         "",
-        f"# 2. Everything collected into {inbox}: profile from the headers.",
-        f"if [[ -d {shlex.quote(str(inbox))} ]]; then",
-        f"    imaparc eml {shlex.quote(str(inbox))}",
-        "fi",
+        "# 2. Archives without a profile, and everything collected into",
+        f"#    {inbox}: profile from the headers.",
+        *(
+            f"if [[ -d {q} ]]; then imaparc eml {q}; fi"
+            for q in map(shlex.quote, map(str, [*dict.fromkeys(unconfigured), inbox]))
+        ),
     ]
     for name, lines in (("collect.sh", collect), ("render.sh", render)):
         script = out_dir / name

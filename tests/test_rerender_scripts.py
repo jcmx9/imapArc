@@ -441,6 +441,20 @@ def test_apply_writes_collect_and_render_scripts(
     assert f"imaparc eml {inbox}" in render
 
 
+def test_render_script_files_unconfigured_archives(
+    archive: dict[str, Path], home: Path
+) -> None:
+    """Mail of an archive without a profile is rendered by file mode."""
+    filed = archive["root"] / "eml-Archiv" / "P"
+    filed.mkdir(parents=True)
+    out = home / "out"
+    _list(home, out)  # --config none.yaml: P is unconfigured
+
+    _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
+
+    assert f"then imaparc eml {filed}; fi" in (out / "render.sh").read_text()
+
+
 def test_collect_gathers_every_pending_eml_and_can_run_twice(
     archive: dict[str, Path], loose: dict[str, Path], home: Path
 ) -> None:
