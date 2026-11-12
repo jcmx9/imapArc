@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.2] - 2026-11-12
+
 ### Changed
 - **Cleaner file names**: `.` and `,` in a subject (or profile name) are treated
   like spaces, so `Re: Termin am 17. November, 14 Uhr` becomes
