@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.16] - 2026-11-13
+
 ### Fixed
 - **`verify` also checks what no profile covers.** Mail filed into `00_Mails`
   (or left behind by a profile removed from `profile.yaml`) was not checked at
