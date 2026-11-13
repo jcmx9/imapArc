@@ -491,8 +491,12 @@ async def _render_mail_part(
                 )
                 parts.append(await _separator(ctx, "Umbrochene Fassung", config))
             parts.append(_Part(reflowed))
-        except RenderError:
-            logger.warning("HTML rendering failed; falling back to text only")
+        except RenderError as exc:
+            logger.warning(
+                "HTML rendering failed for %r, falling back to text only: %s",
+                parsed.headers.subject or "(no subject)",
+                exc,
+            )
             parts.clear()
             html_ok = False
 

@@ -30,6 +30,7 @@ import logging
 import pikepdf
 from playwright.async_api import BrowserContext
 from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from imaparc.exceptions import RenderError
 from imaparc.render.geometry import (
@@ -173,9 +174,21 @@ async def render_html_to_pdf(
     left = f"{rendition.left_mm}mm"
     page = await context.new_page()
     try:
-        await page.set_content(
-            harden_document(html, allow_remote=allow_remote), wait_until="load"
-        )
+        try:
+            await page.set_content(
+                harden_document(html, allow_remote=allow_remote), wait_until="load"
+            )
+        except PlaywrightTimeoutError:
+            # The document is in place; only a resource — with remote images
+            # allowed, typically one slow or dead image host — kept "load" from
+            # firing. Rendering without it beats discarding the whole HTML
+            # rendition: stop what is still pending and print what is there.
+            logger.warning(
+                "not every resource of the %s rendition loaded in time; "
+                "rendering without the missing ones",
+                rendition.name,
+            )
+            await page.evaluate("window.stop()")
         # Must come after set_content: print media would hide @media print
         # content that the reader saw on screen.
         await page.emulate_media(media="screen")

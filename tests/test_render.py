@@ -17,6 +17,7 @@ import pytest
 from imaparc.exceptions import BrowserLaunchError
 from imaparc.html.inline import inline_resources
 from imaparc.mail.models import AttachmentPart
+from imaparc.pdf.merge import count_pages
 from imaparc.render.browser import BrowserPool, build_launch_args, is_allowed_url
 from imaparc.render.geometry import (
     A4_HEIGHT_MM,
@@ -418,3 +419,54 @@ def test_place_on_a4_without_annotations_stays_clean() -> None:
 
     with pikepdf.open(io.BytesIO(placed)) as doc:
         assert "/Annots" not in doc.pages[0]
+
+
+@pytest.mark.requires_chromium
+async def test_a_hanging_remote_image_does_not_cost_the_html_rendition() -> None:
+    """One dead image host must not turn the mail into a text-only PDF.
+
+    With remote images allowed the page waited for "load", timed out, and the
+    whole HTML rendition was thrown away. The mail is now printed without the
+    image that never arrived.
+    """
+    import socket
+    import threading
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(5)
+    port = server.getsockname()[1]
+    held: list[socket.socket] = []
+    stop = threading.Event()
+
+    def accept_and_never_answer() -> None:
+        server.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                connection, _ = server.accept()
+            except OSError:
+                continue
+            held.append(connection)  # keep it open, send nothing
+
+    thread = threading.Thread(target=accept_and_never_answer, daemon=True)
+    thread.start()
+    html = (
+        "<html><body><p>VISIBLE SENTINEL</p>"
+        f'<img src="http://127.0.0.1:{port}/never.png"></body></html>'
+    )
+    try:
+        async with (
+            BrowserPool(timeout_ms=2500, allow_remote=True) as pool,
+            pool.context() as ctx,
+        ):
+            pdf = await render_html_to_pdf(
+                ctx, html, reflowed_rendition(), allow_remote=True
+            )
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        for connection in held:
+            connection.close()
+        server.close()
+
+    assert count_pages(pdf) == 1

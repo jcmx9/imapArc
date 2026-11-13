@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **A slow or dead image host no longer costs a mail its HTML rendition.** With
+  remote images allowed, the page waited for every image; when one host did
+  not answer within the render timeout, the whole HTML rendition was discarded
+  and the mail rendered as text only — permanently, since a rendered mail is
+  skipped afterwards. The mail is now printed without the resource that never
+  arrived. A remaining fallback to text names the mail and the reason.
+
 ## [26.11.14] - 2026-11-13
 
 ### Changed
