@@ -326,6 +326,34 @@ def test_mail_in_eml_error_is_reported_as_failed(tmp_path: Path) -> None:
     assert "bad" in findings[0].detail and "error.txt" in findings[0].detail
 
 
+def test_archives_without_a_profile_are_checked_too(tmp_path: Path) -> None:
+    """00_Mails is nobody's profile — a mail failed there must still show."""
+    from imaparc.verify import unclaimed_profiles
+
+    configured = _profile(tmp_path / "p")
+    failed = tmp_path / "eml-error" / "00_Mails"
+    failed.mkdir(parents=True)
+    (failed / "bad.eml").write_bytes(b"x")
+    (tmp_path / "eml-archive" / "p").mkdir(parents=True)  # the profile's own
+
+    extra = unclaimed_profiles([configured])
+
+    assert [(p.name, p.output) for p in extra] == [("00_Mails", tmp_path / "00_Mails")]
+    assert _kinds(verify_profile(extra[0])) == {"failed"}
+
+
+def test_loose_mail_in_the_input_root_is_reported(tmp_path: Path) -> None:
+    from imaparc.verify import verify_loose
+
+    (tmp_path / "eml-input").mkdir()
+    (tmp_path / "eml-input" / "dropped.eml").write_bytes(b"x")
+
+    findings = verify_loose([_profile(tmp_path / "p")])
+
+    assert [(f.kind, f.profile) for f in findings] == [("pending", "(loose)")]
+    assert "dropped" in findings[0].detail
+
+
 # --- --deep: the checks that read every file -------------------------------
 
 
