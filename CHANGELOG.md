@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.15] - 2026-11-13
+
 ### Changed
 - **The directory a mail lies in is its state.** Beside the profile directories
   there are now three, each with a subdirectory per profile: `eml-input`
