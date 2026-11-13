@@ -9,7 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from imaparc.sources.deliver import deliver_eml, file_away
+from imaparc.exceptions import RemoteResourceError
+from imaparc.sources.deliver import (
+    deliver_eml,
+    error_note,
+    failure_reason,
+    file_away,
+    file_error,
+)
 from imaparc.sources.eml import EmlSource
 from tests.mail_builder import build_mail
 
@@ -180,6 +187,60 @@ def test_a_same_sized_different_mail_is_still_delivered(tmp_path: Path) -> None:
 
 
 def test_a_newly_created_archive_parent_is_private(tmp_path: Path) -> None:
-    deliver_eml(tmp_path / "eml-Archiv" / "p", b"RAW", "m")
+    deliver_eml(tmp_path / "eml-archive" / "p", b"RAW", "m")
 
-    assert stat.S_IMODE((tmp_path / "eml-Archiv").stat().st_mode) == 0o700
+    assert stat.S_IMODE((tmp_path / "eml-archive").stat().st_mode) == 0o700
+
+
+# --- eml-error: the mail, and beside it why ----------------------------------
+
+
+def test_file_error_moves_the_mail_and_writes_a_readable_note(tmp_path: Path) -> None:
+    source = tmp_path / "in" / "x.eml"
+    source.parent.mkdir()
+    source.write_bytes(b"RAW")
+
+    target = file_error(
+        source, b"RAW", tmp_path / "eml-error" / "p", "x", "it broke", ["a — b"]
+    )
+
+    assert target == tmp_path / "eml-error" / "p" / "x.eml"
+    assert target.read_bytes() == b"RAW"
+    assert not source.exists()
+    note = error_note(target).read_text()
+    assert error_note(target).name == "x.error.txt"
+    assert "Reason:  it broke" in note
+    assert "  - a — b" in note
+    assert f"Source:  {source}" in note
+
+
+def test_a_mail_failing_again_in_eml_error_stays_and_gets_a_fresh_note(
+    tmp_path: Path,
+) -> None:
+    error_dir = tmp_path / "eml-error" / "p"
+    first = file_error(tmp_path / "gone.eml", b"RAW", error_dir, "x", "first")
+
+    again = file_error(first, b"RAW", error_dir, "x", "second")
+
+    assert again == first and first.read_bytes() == b"RAW"
+    assert "Reason:  second" in error_note(first).read_text()
+    assert sorted(p.name for p in error_dir.iterdir()) == ["x.eml", "x.error.txt"]
+
+
+def test_archiving_a_once_failed_mail_removes_its_note(tmp_path: Path) -> None:
+    error_dir = tmp_path / "eml-error" / "p"
+    failed = file_error(tmp_path / "gone.eml", b"RAW", error_dir, "x", "first")
+
+    file_away(failed, b"RAW", [(tmp_path / "eml-archive" / "p", "x")])
+
+    assert list(error_dir.iterdir()) == []
+    assert (tmp_path / "eml-archive" / "p" / "x.eml").read_bytes() == b"RAW"
+
+
+def test_failure_reason_lists_the_resources_that_did_not_load() -> None:
+    reason, details = failure_reason(
+        RemoteResourceError([("http://a/x.png", "HTTP 404"), ("http://b/y", "timeout")])
+    )
+    assert "remote resources did not load" in reason
+    assert details == ["http://a/x.png — HTTP 404", "http://b/y — timeout"]
+    assert failure_reason(ValueError("boom")) == ("ValueError: boom", [])

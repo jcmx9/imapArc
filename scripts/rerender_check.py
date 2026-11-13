@@ -1,19 +1,19 @@
-"""Decide which PDF folders under a directory tree can safely be rendered again.
+"""Decide which PDFs under a directory tree can safely be rendered again.
 
 Called by ``rerender-list.sh`` and ``rerender-apply.sh``; not part of the
-``imaparc`` command. Two kinds of archive are found by their
-``.imaparc-manifest`` files:
+``imaparc`` command. Three kinds of archive are found:
 
-- **profile** archives — ``<profile>/pdf/<mail>/`` with the ``.eml`` in
-  ``<profile>/eml/`` or, once rendered, ``eml-Archiv/<profile>/`` beside it;
+- **flat** archives (since 26.11.6) — ``<profile>/<mail>.pdf``, the ``.eml``
+  in ``eml-archive/<profile>/`` (or ``eml-input``, ``eml-error``, the
+  ``eml-Archiv`` of 26.11.4 to 26.11.14); the PDF itself records the mail's hash
+  in its XMP metadata, so a flat PDF is proven by **hash** only;
+- **profile** archives of older versions — ``<profile>/pdf/<mail>/`` folders
+  with a ``.imaparc-manifest``, the ``.eml`` in ``<profile>/eml/``;
 - **eml** folders — ``<dir>/<mail>/`` holding its own ``.eml`` (``imaparc
-  eml`` until 26.11.3);
-- **flat** archives (since 26.11.6) — ``<profile>/<mail>.pdf`` with the
-  ``.eml`` in ``eml-Archiv/<profile>/``; the PDF itself records the mail's hash
-  in its XMP metadata, so a flat PDF is proven by **hash** only.
+  eml`` until 26.11.3).
 
-A folder qualifies only when its mail provably still exists as ``.eml`` — in
-one of the profile's two ``.eml`` directories, or inside the folder itself:
+A PDF qualifies only when its mail provably still exists as ``.eml`` — in one
+of the profile's ``.eml`` directories, or inside the folder itself:
 
 - **hash** — the manifest (26.8.12+) records ``sha256:`` of the raw mail, and a
   ``.eml`` with exactly those bytes exists. Nothing else is consulted.
@@ -39,9 +39,11 @@ for ``imaparc eml`` to file into the archive).
 ``recheck`` re-validates a list right before it is applied and prints
 ``profile<TAB>FOLDER`` or ``eml<TAB>FOLDER<TAB>EML`` per verified folder;
 rejected ones go to stderr. ``commands`` writes OUT_DIR/collect.sh and
-OUT_DIR/render.sh (INBOX defaults to ~/imapArc/emlinput); ``collect`` is what
-collect.sh runs — it moves the pending ``.eml`` files into INBOX. Apart from
-``collect``, nothing here writes outside OUT_DIR.
+OUT_DIR/render.sh (INBOX defaults to ~/imapArc/eml-input); ``collect`` is what
+collect.sh runs — it gathers the loose ``.eml`` into INBOX and returns archived
+mail whose PDF is gone to its profile's eml-input, because rendering never
+reads the eml-archive. Apart from ``collect``, nothing here writes outside
+OUT_DIR.
 """
 
 from __future__ import annotations
@@ -62,24 +64,36 @@ from imaparc.html.to_text import html_to_text
 from imaparc.mail.models import ParsedMail
 from imaparc.mail.parser import parse_mail
 from imaparc.pdf import provenance
-from imaparc.profiles import EML_ARCHIVE, archived_eml_dir, load_profiles
+from imaparc.pipeline import ArchiveIndex, mail_identity
+from imaparc.profiles import (
+    EML_ARCHIVE,
+    EML_ERROR,
+    EML_INPUT,
+    LEGACY_EML_ARCHIVE,
+    all_eml_dirs,
+    archived_eml_dir,
+    input_eml_dir,
+    load_profiles,
+)
 from imaparc.sources.deliver import file_away
 
 MANIFEST = ".imaparc-manifest"
 HASH_PREFIX = "sha256:"
 DEFAULT_CONFIG = Path.home() / ".config" / "imaparc" / "profile.yaml"
 
-# Never searched: macOS caches, the trash, the eml-Archiv (rendered mail, not
-# loose) and the pdf-Löscharchiv (folders already set aside — finding them again
-# would offer them a second time). Dot-directories are skipped too.
+# The directories that hold a root's mail, one subdirectory per profile.
+_EML_GROUPS = (EML_INPUT, EML_ARCHIVE, EML_ERROR, LEGACY_EML_ARCHIVE)
+# Never searched: macOS caches, the trash, the mail directories (their .eml are
+# not loose, and collect.sh settles them), the "emlinput" of 26.11.5 to 26.11.14
+# and the pdf-Löscharchiv (PDFs already set aside — finding them again would
+# offer them a second time). Dot-directories are skipped too.
 PDF_SET_ASIDE = "pdf-Löscharchiv"
-INBOX_NAME = "emlinput"
 _SKIP_NAMES = frozenset(
     unicodedata.normalize("NFC", n)
-    for n in ("Library", ".Trash", EML_ARCHIVE, PDF_SET_ASIDE, INBOX_NAME)
+    for n in ("Library", ".Trash", *_EML_GROUPS, PDF_SET_ASIDE, "emlinput")
 )
-# Where collect.sh gathers every loose .eml before `imaparc eml` files it away.
-DEFAULT_INBOX = Path.home() / "imapArc" / INBOX_NAME
+# Where collect.sh gathers every loose .eml: the root of the eml-input.
+DEFAULT_INBOX = Path.home() / "imapArc" / EML_INPUT
 
 # Pages of the PDF searched for the mail's text. The header block and the start
 # of the body sit on the first pages of every rendition.
@@ -158,11 +172,9 @@ def _emls_in(directory: Path) -> list[Path]:
 
 
 def _profile_emls(profile_dir: Path) -> list[Path]:
-    """A profile's mail: the ``eml/`` inbox and its ``eml-Archiv`` directory."""
-    return [
-        *_emls_in(profile_dir / "eml"),
-        *_emls_in(archived_eml_dir(profile_dir)),
-    ]
+    """A profile's mail, wherever it is: input, archive, error, and the
+    directories of earlier versions."""
+    return [e for d in all_eml_dirs(profile_dir) if d.is_dir() for e in _emls_in(d)]
 
 
 # The header date as PDFs without a manifest hash (before 26.8.12) print it.
@@ -249,9 +261,7 @@ def verdict_pdf(pdf: Path, mails: _Mails) -> tuple[str, Path | None]:
 def _kind(folder: Path) -> str:
     """``profile`` for ``<profile>/pdf/<mail>/``, else ``eml`` (an adhoc folder)."""
     parent = folder.parent
-    if parent.name == "pdf" and (
-        (parent.parent / "eml").is_dir() or archived_eml_dir(parent.parent).is_dir()
-    ):
+    if parent.name == "pdf" and any(d.is_dir() for d in all_eml_dirs(parent.parent)):
         return "profile"
     return "eml"
 
@@ -321,18 +331,19 @@ def discover(
             and unicodedata.normalize("NFC", d) not in _SKIP_NAMES
             and os.path.join(dirpath, d) not in skip
         ]
-        if EML_ARCHIVE in archive_names:
-            # Every profile with archived mail counts, PDFs or not: one whose
-            # PDFs are all gone (or were never rendered) must still be rendered.
-            for entry in sorted((here / EML_ARCHIVE).iterdir()):
+        for group in _EML_GROUPS:
+            # Every profile with mail counts, PDFs or not: one whose PDFs are
+            # all gone (or were never rendered) must still be rendered.
+            if group not in archive_names:
+                continue
+            for entry in sorted((here / group).iterdir()):
                 if entry.is_dir() and not entry.name.startswith("."):
                     flat_dirs.add(here / entry.name)
         if MANIFEST not in filenames:
             if dirpath not in inboxes and str(here.resolve()) not in inboxes:
                 loose.extend(here / f for f in sorted(filenames) if f.endswith(".eml"))
-            if (
-                any(f.endswith(".pdf") for f in filenames)
-                and archived_eml_dir(here).is_dir()
+            if any(f.endswith(".pdf") for f in filenames) and any(
+                d.is_dir() for d in all_eml_dirs(here)
             ):
                 flat_dirs.add(here)
             continue
@@ -452,47 +463,108 @@ def _pending(out_dir: Path) -> list[Path]:
     return [Path(f) for f in dict.fromkeys(files)]
 
 
+def _settle(profile_dir: Path, log: list[str]) -> tuple[int, int]:
+    """Put a profile's archived mail where its PDF says it belongs.
+
+    The eml-archive is for mail with a PDF, and rendering never reads it. So a
+    mail there whose PDF is gone — set aside for a re-render, or never written
+    — goes **back to eml-input** to be rendered; one with its PDF stays, or
+    moves over from the ``eml-Archiv`` of 26.11.4 to 26.11.14. Mail in
+    ``eml-input`` and ``eml-error`` is left where it is.
+
+    Returns:
+        ``(returned to the input, moved into the archive)``.
+    """
+    index = ArchiveIndex.scan(profile_dir)
+    archive, waiting = archived_eml_dir(profile_dir), input_eml_dir(profile_dir)
+    legacy = profile_dir.parent / LEGACY_EML_ARCHIVE / profile_dir.name
+    returned = archived = 0
+    for directory in (archive, legacy):
+        for eml in sorted(_emls_in(directory)) if directory.is_dir() else []:
+            raw = eml.read_bytes()
+            try:
+                identity = mail_identity(raw, parse_mail(raw), None)
+            except ParseError:
+                identity = f"{HASH_PREFIX}{hashlib.sha256(raw).hexdigest()}"
+            target = archive if index.find(identity) is not None else waiting
+            if target == directory:
+                continue
+            [moved] = file_away(eml, raw, [(target, eml.stem)])
+            log.append(f"{eml}\t{moved}")
+            if target == waiting:
+                returned += 1
+            else:
+                archived += 1
+    return returned, archived
+
+
 def _collect(out_dir: Path, inbox: Path) -> int:
-    """Move every pending ``.eml`` into ``inbox``, logging where each came from.
+    """Put every ``.eml`` where rendering expects it, logging each move.
+
+    - Loose mail (``loose.txt``, and what the apply step took out of old mail
+      folders) goes into ``inbox``, the root of the eml-input.
+    - Archived mail whose PDF is gone returns to its profile's eml-input
+      (see :func:`_settle`) — that is what makes a re-render happen at all.
 
     Same guarantees as the archive: written atomically, never overwritten (a
     different mail under a taken name becomes ``-2``), an identical copy reused,
-    and the source only removed once the copy exists. A file already gone was
-    collected by an earlier run, so running again is harmless.
+    and the source only removed once the copy exists. Running again is harmless.
     """
-    log = inbox / "emlinput.log"
-    moved = 0
+    log: list[str] = []
+    loose = 0
     for source in _pending(out_dir):
         if not source.is_file():
             continue
         raw = source.read_bytes()
         [target] = file_away(source, raw, [(inbox, source.stem)])
-        with log.open("a", encoding="utf-8") as handle:
-            handle.write(f"{source}\t{target.name}\n")
-        moved += 1
-    print(f"{moved} .eml collected into {inbox} (log: {log})")
+        log.append(f"{source}\t{target}")
+        loose += 1
+
+    returned = archived = 0
+    for kind, path in _archives(out_dir):
+        if kind in ("profile", "flat"):
+            back, kept = _settle(path, log)
+            returned += back
+            archived += kept
+
+    if log:
+        inbox.mkdir(parents=True, exist_ok=True)
+        with (inbox / "collect.log").open("a", encoding="utf-8") as handle:
+            handle.write("".join(f"{line}\n" for line in log))
+    print(f"{loose} loose .eml collected into {inbox}")
+    print(f"{returned} archived .eml without a PDF returned to their eml-input")
+    if archived:
+        print(f"{archived} .eml moved from {LEGACY_EML_ARCHIVE} to {EML_ARCHIVE}")
+    if log:
+        print(f"log: {inbox / 'collect.log'}")
     return 0
+
+
+def _archives(out_dir: Path) -> list[tuple[str, Path]]:
+    """``(kind, path)`` of the archives the list step found."""
+    tsv = out_dir / "archives.tsv"
+    rows = tsv.read_text(encoding="utf-8").splitlines() if tsv.exists() else []
+    return [(kind, Path(path)) for kind, path, *_ in (r.split("\t") for r in rows)]
 
 
 def _commands(out_dir: Path, inbox: Path) -> int:
     """Write collect.sh and render.sh, run in that order by the user.
 
-    ``collect.sh`` moves every ``.eml`` that is not in a configured profile's
-    inbox — loose in ``loose.txt``, or taken out of an ``imaparc eml`` folder by
-    the apply step — into ``inbox``, so it can be looked through before
-    anything is rendered. ``render.sh`` then runs ``imaparc render`` for the
-    configured profiles and ``imaparc eml`` on ``inbox``: each mail's profile
-    comes from its headers, its PDF lands in the archive and its ``.eml`` in the
-    ``eml-Archiv``.
+    ``collect.sh`` puts every ``.eml`` where rendering expects it (see
+    :func:`_collect`), so it can be looked through before anything is rendered.
+    ``render.sh`` then runs ``imaparc render`` for the configured profiles and
+    ``imaparc eml`` on whatever else waits in an eml-input — loose mail in its
+    root, and the directories of archives no profile.yaml covers (``00_Mails``).
+    Each mail ends up in the eml-archive with its PDF, or in eml-error.
     """
     repo = Path(__file__).resolve().parent.parent
     collect = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
-        f"# Moves the .eml files listed in {out_dir}/loose.txt (and those taken",
-        f"# out of mail folders) into {inbox}. Logged in emlinput.log there.",
-        "# Files already moved are skipped, so this can simply be run again.",
+        f"# Gathers the loose .eml listed in {out_dir}/loose.txt into",
+        f"# {inbox} and returns archived mail whose PDF is gone to its",
+        "# eml-input. Logged in collect.log there. Safe to run again.",
         "uv run --quiet --project "
         + shlex.quote(str(repo))
         + " python "
@@ -502,28 +574,24 @@ def _commands(out_dir: Path, inbox: Path) -> int:
         + " "
         + shlex.quote(str(inbox)),
     ]
-    # Archives no profile.yaml covers (00_Mails, say) keep their mail in an
-    # eml-Archiv directory that `imaparc render` never reads; file mode does.
-    unconfigured: list[Path] = []
-    tsv = out_dir / "archives.tsv"
-    for row in tsv.read_text(encoding="utf-8").splitlines() if tsv.exists() else []:
-        kind, path, _name, configured = row.split("\t")
-        directory = archived_eml_dir(Path(path))
-        if kind in ("profile", "flat") and configured == "0" and directory.is_dir():
-            unconfigured.append(directory)
+    inputs = dict.fromkeys(
+        [inbox, *(path.parent / EML_INPUT for _, path in _archives(out_dir))]
+    )
     render = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
-        "# 1. The configured profiles: render their mail, then archive.",
+        "# 1. The configured profiles: render what waits in their eml-input.",
         "imaparc render",
         "",
-        "# 2. Archives without a profile, and everything collected into",
-        f"#    {inbox}: profile from the headers.",
-        *(
-            f"if [[ -d {q} ]]; then imaparc eml {q}; fi"
-            for q in map(shlex.quote, map(str, [*dict.fromkeys(unconfigured), inbox]))
-        ),
+        "# 2. Whatever else waits there — loose mail, and archives without a",
+        "#    profile such as 00_Mails: the profile comes from where the mail",
+        "#    lies or from its headers. Directories render emptied are no-ops.",
+        "for dir in \\",
+        *(f"    {q} {q}/*/ \\" for q in map(shlex.quote, map(str, inputs))),
+        "; do",
+        '    if [[ -d "${dir}" ]]; then imaparc eml "${dir}"; fi',
+        "done",
     ]
     for name, lines in (("collect.sh", collect), ("render.sh", render)):
         script = out_dir / name

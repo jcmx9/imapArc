@@ -3,10 +3,12 @@
 This is the ``eml`` command's engine. A mail — dragged out of a mail client, or
 lying anywhere on disk — is filed exactly as ``fetch`` + ``render`` would file
 it: its profile is derived from its **headers** with the rules in
-``profile.yaml``, the PDF goes to ``<profile output>/<basename>.pdf``, and once
-it exists the ``.eml`` moves into ``eml-Archiv/<output name>/``. A mail
-matching several profiles is filed into each of them; one matching none goes to
-``<root>/00_Mails/``.
+``profile.yaml`` (or from its place, if it lies in a profile's ``eml-input`` or
+``eml-error`` directory), the PDF goes to ``<profile output>/<basename>.pdf``,
+and once it exists the ``.eml`` moves into ``eml-archive/<output name>/``. A
+mail matching several profiles is filed into each of them; one matching none
+goes to ``<root>/00_Mails/``. A mail that cannot be rendered correctly gets no
+PDF and moves to ``eml-error/<output name>/`` with a note saying why.
 
 Still isolated from the IMAP side: no connection, no ``.env``, no state store.
 Nothing here can affect what a later ``fetch`` considers delivered.
@@ -32,10 +34,17 @@ from imaparc.pipeline import (
     render_mail,
     sweep_staging,
 )
-from imaparc.profiles import Profile, archived_eml_dir, matching_profiles
+from imaparc.profiles import (
+    EML_ERROR,
+    EML_INPUT,
+    Profile,
+    archived_eml_dir,
+    error_eml_dir,
+    matching_profiles,
+)
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
-from imaparc.sources.deliver import file_away
+from imaparc.sources.deliver import failure_reason, file_away, file_error
 from imaparc.storage import make_dir
 
 logger = logging.getLogger(__name__)
@@ -95,6 +104,30 @@ def _received(eml: Path) -> datetime | None:
         return None
 
 
+def _profile_by_location(
+    eml: Path, profiles: list[Profile], name: str
+) -> list[Profile]:
+    """The profile a mail belongs to because of *where it lies*, if any.
+
+    A mail in ``<root>/eml-input/<profile>/`` or ``<root>/eml-error/<profile>/``
+    was put there for that profile — by ``fetch``, whose IMAP folder rules its
+    headers cannot show, or by an earlier failed run — so the location decides
+    and the headers are not consulted. The same for ``…/00_Mails/``, the
+    directory of mail no profile claims.
+    """
+    place, group = eml.parent, eml.parent.parent
+    if group.name not in (EML_INPUT, EML_ERROR):
+        return []
+    root = group.parent.resolve()
+    for profile in profiles:
+        same_root = profile.output.parent.resolve() == root
+        if same_root and profile.output.name == place.name:
+            return [profile]
+    if place.name == FALLBACK_DIR:
+        return [fallback_profile(root, name)]
+    return []
+
+
 def fallback_profile(root: Path, name: str) -> Profile:
     """Where a mail goes that no profile claims: ``<root>/00_Mails``."""
     return Profile(name=name, account="-", output=root / FALLBACK_DIR, pdf=True)
@@ -125,10 +158,11 @@ async def run_adhoc(
 ) -> RunReport:
     """Render ``.eml`` files into the profile archive and archive each one.
 
-    The ``.eml`` is only moved — after all renders have finished — once a PDF
-    exists for **every** profile it was filed into (rendered now, or recognised
-    as rendered); a mail that failed anywhere stays where it was, so a rerun
-    picks it up.
+    The ``.eml`` is only moved to the ``eml-archive`` — after all renders have
+    finished — once a PDF exists for **every** profile it was filed into
+    (rendered now, or recognised as rendered). A mail that could not be rendered
+    correctly for any of them gets no PDF there and moves to ``eml-error`` with
+    a note; passing that directory to this command tries it again.
 
     **Remote images are loaded by default here**, unlike ``render`` where they
     are opt-in per profile. This command typically renders a mail the user
@@ -186,6 +220,20 @@ async def run_adhoc(
             )
         return targets[output]
 
+    def failed(
+        eml: Path, raw: bytes | None, profile: Profile, exc: BaseException
+    ) -> None:
+        """No PDF for this mail: move it to the profile's eml-error, with a note."""
+        reason, details = failure_reason(exc)
+        report.failed.append((str(eml), reason))
+        if raw is None:
+            return  # could not even be read: nothing to move
+        error_dir = error_eml_dir(profile.output)
+        try:
+            file_error(eml, raw, error_dir, eml.stem, reason, details)
+        except OSError as move_error:
+            logger.error("Could not move %s to %s: %s", eml, error_dir, move_error)
+
     semaphore = asyncio.Semaphore(jobs)
     # Separate from `semaphore`: Ghostscript holds a whole document in memory,
     # so it needs a tighter bound than the number of mails rendered at once.
@@ -202,15 +250,21 @@ async def run_adhoc(
 
             async def process(eml: Path) -> list[RenderResult]:
                 done: list[tuple[_Target, RenderResult]] = []
+                raw: bytes | None = None
+                chosen: list[Profile] = [fallback]
                 async with semaphore:
                     try:
                         raw = eml.read_bytes()
                         parsed = parse_mail(raw)
-                        chosen = matching_profiles(
-                            profiles,
-                            parsed.headers,
-                            [a.filename for a in parsed.attachments],
-                        ) or [fallback]
+                        chosen = (
+                            _profile_by_location(eml, profiles, name)
+                            or matching_profiles(
+                                profiles,
+                                parsed.headers,
+                                [a.filename for a in parsed.attachments],
+                            )
+                            or [fallback]
+                        )
                         for profile in chosen:
                             t = target(profile)
                             result = await render_mail(
@@ -240,14 +294,14 @@ async def run_adhoc(
                             )
                         )
                     except (ImapArcError, OSError) as exc:
-                        # One unreadable mail must not abort the whole run.
+                        # One bad mail must not abort the whole run.
                         logger.error("Failed to render %s: %s", eml, exc)
-                        report.failed.append(str(eml))
+                        failed(eml, raw, chosen[0], exc)
                     except Exception as exc:
                         # Anything else a mail can provoke (the sender controls
                         # its bytes): named, counted, and the run goes on.
                         logger.exception("Failed to render %s: %s", eml, exc)
-                        report.failed.append(str(eml))
+                        failed(eml, raw, chosen[0], exc)
                     finally:
                         progress.advance(task)
                 return [r for _, r in done]

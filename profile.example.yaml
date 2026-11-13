@@ -78,9 +78,11 @@ profiles:
                                      #   smaller than this (strictly).
 
     output: ~/Archiv/Hetzner         # REQUIRED. Target directory of the PDFs;
-                                     #   the .eml go to eml-Archiv/<name>/ beside
-                                     #   it (~/Archiv/eml-Archiv/Hetzner). "~" is
-                                     #   expanded. No default.
+                                     #   beside it the .eml wait in
+                                     #   eml-input/<name>/, are kept in
+                                     #   eml-archive/<name>/ once rendered, or go
+                                     #   to eml-error/<name>/ if that fails. "~"
+                                     #   is expanded. No default.
 
     pdf: true                        # Optional, default false. When true, also
                                      #   render each message to one file,

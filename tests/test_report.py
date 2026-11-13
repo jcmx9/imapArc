@@ -18,14 +18,12 @@ def _result(
     *,
     written: bool = True,
     skipped: bool = False,
-    html_rendered: bool = True,
     complete: bool = True,
 ) -> RenderResult:
     return RenderResult(
         basename=name,
         written=written,
         skipped=skipped,
-        html_rendered=html_rendered,
         complete=complete,
     )
 
@@ -54,14 +52,6 @@ def test_incomplete_counts_only_written_mails() -> None:
     assert "1 with attachments not shown as pages" in report.summary()
 
 
-def test_html_fallback_is_reported() -> None:
-    report = RunReport()
-    report.add(_result("a", html_rendered=False))
-
-    assert [r.basename for r in report.html_fallback] == ["a"]
-    assert "1 fell back to the text version" in report.summary()
-
-
 def test_non_compliant_lists_file_names() -> None:
     report = RunReport()
     report.add(_result("a"))
@@ -83,15 +73,15 @@ def test_non_compliant_truncates_after_ten() -> None:
     assert "… and 2 more" in summary
 
 
-def test_failed_mails_are_named_first() -> None:
+def test_failed_mails_are_named_first_with_their_reason() -> None:
     report = RunReport()
     report.add(RenderResult(basename="ok", written=True))
-    report.failed.append("/in/broken mail.eml")
+    report.failed.append(("/in/broken mail.eml", "2 remote resource(s) did not load"))
 
     lines = report.summary().splitlines()
 
-    assert lines[1] == "1 FAILED to render (see the log):"
-    assert lines[2] == "  - broken mail.eml"
+    assert lines[1].startswith("1 FAILED to render — no PDF written")
+    assert lines[2] == "  - broken mail.eml: 2 remote resource(s) did not load"
 
 
 # --- PDF/A validation ------------------------------------------------------

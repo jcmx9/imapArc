@@ -1,4 +1,4 @@
-"""Orchestrate the render phase: each profile's ``.eml`` files → one PDF each.
+"""Orchestrate the render phase: each profile's waiting mail → one PDF each.
 
 The counterpart to :mod:`imaparc.fetch` for the second phase, and the sibling of
 :mod:`imaparc.adhoc` for the profile-driven case. Lives here rather than in the
@@ -30,10 +30,16 @@ from imaparc.pipeline import (
     render_mail,
     sweep_staging,
 )
-from imaparc.profiles import Profile, archived_eml_dir
+from imaparc.profiles import (
+    Profile,
+    archived_eml_dir,
+    error_eml_dir,
+    input_eml_dir,
+    pending_eml_dirs,
+)
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
-from imaparc.sources.deliver import file_away
+from imaparc.sources.deliver import failure_reason, file_away, file_error
 from imaparc.sources.eml import EmlSource
 from imaparc.storage import DIR_MODE, make_dir
 
@@ -69,16 +75,15 @@ async def run_render(
     report = RunReport()
     plans: list[tuple[Profile, RunConfig, Path, list[Path]]] = []
     for profile in profiles:
-        archive, inbox = archived_eml_dir(profile.output), profile.output / "eml"
-        mails = [
-            *(EmlSource(archive).paths() if archive.is_dir() else []),
-            # The eml/ inbox of versions before 26.11.6: rendered from there
-            # and then moved into the archive.
-            *(EmlSource(inbox).paths() if inbox.is_dir() else []),
-        ]
-        if not archive.is_dir() and not inbox.is_dir():
-            logger.warning(
-                "profile '%s': no mail at %s — run fetch first", profile.name, archive
+        # Only what waits: the profile's eml-input directory (and the eml/ inbox
+        # of versions before 26.11.6). The eml-archive is never read here.
+        sources = [d for d in pending_eml_dirs(profile.output) if d.is_dir()]
+        mails = [path for source in sources for path in EmlSource(source).paths()]
+        if not sources:
+            logger.debug(
+                "profile '%s': no %s — nothing fetched yet",
+                profile.name,
+                input_eml_dir(profile.output),
             )
             continue
         jobs = cli_jobs if cli_jobs is not None else profile.jobs
@@ -137,12 +142,14 @@ async def _render_profile(
     progress: Progress,
     task: TaskID,
 ) -> None:
-    """Render every mail of one profile into ``<output>/<basename>.pdf``.
+    """Render one profile's waiting mail to ``<output>/<basename>.pdf``.
 
-    The mail comes from the profile's ``eml-Archiv`` directory, where it stays.
-    One still in a legacy ``eml/`` inbox moves on to the ``eml-Archiv`` once its
-    PDF exists — at the end of the run at the latest, so a copy skipped because
-    its twin was still rendering is not left behind.
+    Each mail leaves the input one of two ways: with its PDF written (or found
+    already rendered), its ``.eml`` moves to ``eml-archive``; if it cannot be
+    rendered correctly, no PDF is written and the ``.eml`` moves to
+    ``eml-error`` with a note saying why. Archiving happens after every render
+    has finished, so a copy skipped because its twin was still rendering finds
+    that PDF in place too.
     """
     make_dir(output)
     os.chmod(output, 0o700)  # owner-writable, private (same as DIR_MODE at rest)
@@ -152,18 +159,29 @@ async def _render_profile(
     # to one basename reserve distinct names, while two copies of the same mail
     # (two UIDs, one Message-ID) collapse into a single PDF.
     claimed: dict[str, str] = {}
-    # What is already archived, by identity: a mail stored under an older naming
+    # What is already rendered, by identity: a mail stored under an older naming
     # scheme is recognised instead of being rendered again under its new name.
     existing = ArchiveIndex.scan(output)
     archive_dir = archived_eml_dir(output)
-    inbox = output / "eml"
+    error_dir = error_eml_dir(output)
     pending: list[tuple[Path, str, str]] = []
+
+    def failed(path: Path, raw: bytes | None, exc: BaseException) -> None:
+        reason, details = failure_reason(exc)
+        report.failed.append((str(path), reason))
+        if raw is None:
+            return  # could not even be read: nothing to move
+        try:
+            file_error(path, raw, error_dir, path.stem, reason, details)
+        except OSError as move_error:
+            logger.error("Could not move %s to %s: %s", path, error_dir, move_error)
 
     async def process(path: Path) -> RenderResult | None:
         async with semaphore:
+            raw: bytes | None = None
             try:
                 # Read here, not when listing: only `jobs` mails are in memory
-                # at any moment, regardless of how large the archive is.
+                # at any moment, regardless of how much mail is waiting.
                 raw = path.read_bytes()
                 parsed = parse_mail(raw)
                 result = await render_mail(
@@ -196,20 +214,19 @@ async def _render_profile(
                         len(parsed.attachments),
                         "" if result.complete else ", some embedded as files",
                     )
-                if path.parent == inbox:
-                    digest = hashlib.sha256(raw).hexdigest()
-                    pending.append((path, result.basename, digest))
+                digest = hashlib.sha256(raw).hexdigest()
+                pending.append((path, result.basename, digest))
                 return result
             except (ImapArcError, OSError) as exc:
                 # One bad mail must not abort the whole profile's render.
                 logger.error("Failed to render %s: %s", path, exc)
-                report.failed.append(str(path))
+                failed(path, raw, exc)
                 return None
             except Exception as exc:
                 # Anything else a mail can provoke (the sender controls its
                 # bytes): named, counted, and the run goes on.
                 logger.exception("Failed to render %s: %s", path, exc)
-                report.failed.append(str(path))
+                failed(path, raw, exc)
                 return None
             finally:
                 progress.advance(task)
@@ -226,16 +243,17 @@ async def _render_profile(
         # Only now, with every render finished: a copy skipped because its twin
         # was still being written finds that PDF in place too.
         for path, basename, digest in pending:
-            if is_rendered(output, basename):
-                try:
-                    data = path.read_bytes()
-                    if hashlib.sha256(data).hexdigest() != digest:
-                        # Not the bytes the PDF was made from: leave it for the
-                        # next run rather than archive a mail no PDF matches.
-                        logger.warning("%s changed while rendering; left", path)
-                        continue
-                    file_away(path, data, [(archive_dir, path.stem)])
-                except OSError as exc:
-                    logger.error("Could not archive %s: %s", path, exc)
+            if not is_rendered(output, basename):
+                continue  # its twin failed: stays in the input for the next run
+            try:
+                data = path.read_bytes()
+                if hashlib.sha256(data).hexdigest() != digest:
+                    # Not the bytes the PDF was made from: leave it for the
+                    # next run rather than archive a mail no PDF matches.
+                    logger.warning("%s changed while rendering; left", path)
+                    continue
+                file_away(path, data, [(archive_dir, path.stem)])
+            except OSError as exc:
+                logger.error("Could not archive %s: %s", path, exc)
     finally:
         os.chmod(output, DIR_MODE)  # immutable at rest

@@ -5,6 +5,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **The directory a mail lies in is its state.** Beside the profile directories
+  there are now three, each with a subdirectory per profile: `eml-input`
+  (waiting — `fetch` delivers here), `eml-archive` (rendered correctly) and
+  `eml-error` (could not be rendered correctly). A render run empties the
+  input: each mail ends in the archive with its PDF, or in `eml-error` with no
+  PDF and a `<name>.error.txt` saying why. `render` reads only the input, never
+  the archive. `imaparc eml <eml-error/…>` tries a failed mail again.
+- **No PDF rather than an incomplete one.** A mail whose HTML rendition cannot
+  be rendered no longer becomes a text-only PDF — that fallback stood for the
+  mail for good, unnoticed. And with remote images allowed, an image that does
+  not load (host unreachable, timeout, "404") now fails the mail instead of
+  being left out silently; the error note names every such address.
+  `--no-remote-images` remains the deliberate way to render without them.
+- `imaparc eml` takes a mail lying in a profile's `eml-input` or `eml-error`
+  directory for that profile, without consulting its headers.
+- `verify` reports mail waiting in `eml-input` (`pending`) and in `eml-error`
+  (`failed`); `render` points at mail waiting outside any profile.
+- Rerender scripts: `collect.sh` returns archived mail whose PDF is gone to its
+  `eml-input` (rendering no longer reads the archive) and moves mail from the
+  `eml-Archiv` of earlier versions to `eml-archive`; `render.sh` covers every
+  directory of the input.
+
+### Migration
+- The `eml-Archiv` and `emlinput` directories of 26.11.4–26.11.14 are still
+  recognised. Run `scripts/rerender-list.sh`, then `collect.sh` to move their
+  mail to `eml-archive` (rendered) or `eml-input` (no PDF yet).
+
 ## [26.11.14] - 2026-11-13
 
 ### Changed

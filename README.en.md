@@ -24,12 +24,14 @@ Guiding principle: **imapArc preserves, it does not alter.** The original is kep
 │   ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.pdf
 │   └── 2026-08-01_10-30-12_Hetzner_Rechnung_August_2026.pdf
 ├── 00_Mails/                                  # mail that matches no profile
-├── eml-Archiv/                                # the originals, per profile
-│   └── Hetzner/
-│       ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.eml
-│       └── 2026-08-01_10-30-12_Hetzner_Rechnung_August_2026.eml
-└── emlinput/                                  # optional: collecting point for loose .eml
+├── eml-input/Hetzner/                         # waiting: fetched, no PDF yet
+├── eml-archive/Hetzner/                       # done: rendered correctly
+│   ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.eml
+│   └── 2026-08-01_10-30-12_Hetzner_Rechnung_August_2026.eml
+└── eml-error/Hetzner/                         # failed: .eml + <name>.error.txt
 ```
+
+**The directory is the state.** Every mail exists as `.eml` in exactly one place: it waits in `eml-input` until it is rendered. If that works, the PDF is stored and the `.eml` moves to `eml-archive`. If it does not work correctly, **no PDF is stored**, and the `.eml` moves to `eml-error` — with a text file beside it that says why. The archive is never rendered again.
 
 Names follow the scheme `DATE_TIME_PROFILE_SUBJECT`, configurable per profile. Times are local time.
 
@@ -122,7 +124,7 @@ profiles:
       since: 2026-01-01            # ignore mail before this day
       # until: 2026-12-31          # ignore mail after this day
       # larger: 5MB                # only larger / smaller: only smaller mail
-    output: ~/imapArc/Hetzner      # PDF target; .eml in ~/imapArc/eml-Archiv/Hetzner
+    output: ~/imapArc/Hetzner      # PDF target; .eml in ~/imapArc/eml-*/Hetzner
     pdf: true                      # also render PDFs (default false)
     # remote_images: false         # load remote images when rendering
     # filename_pattern: '{date}_{profile}_{subject}'
@@ -147,7 +149,7 @@ imaparc render           # render only (every profile, whatever its pdf flag)
 imaparc all --profile Hetzner   # restrict any command to one profile
 ```
 
-On every run `fetch` evaluates all mail in the folders against the **current** profiles and skips what was fetched before — so a changed or new profile picks up old mail automatically. Server actions (`after_fetch`) only run once the mail is safely stored locally. `render` skips every mail that already has its PDF, and needs no `.env`.
+On every run `fetch` evaluates all mail in the folders against the **current** profiles and skips what was fetched before — so a changed or new profile picks up old mail automatically. Server actions (`after_fetch`) only run once the mail is safely stored locally. `render` processes what waits in `eml-input/<profile>/` and needs no `.env`; afterwards the input is empty — every mail is in `eml-archive` or in `eml-error`.
 
 ### Filing single mails: `imaparc eml`
 
@@ -156,14 +158,14 @@ Dragging a message out of Apple Mail, Thunderbird or Outlook into the Finder pro
 ```bash
 imaparc eml a.eml b.eml            # exactly these two
 imaparc eml ~/Desktop              # every .eml there (not in subfolders)
-imaparc eml --no-remote-images ~/imapArc/emlinput   # many old mails, loading nothing
+imaparc eml --no-remote-images ~/imapArc/eml-input  # many old mails, loading nothing
 ```
 
-The **profile is derived from the headers**: the rules in `profile.yaml` (addresses, domains, subject, date, attachment types) are applied to the mail; folder rules only apply to IMAP. A mail matching several profiles is filed into each; one matching none into `~/imapArc/00_Mails`. Once the PDF exists the `.eml` moves to the `eml-Archiv` — the source file only disappears when every copy has been written.
+The **profile is derived from the headers**: the rules in `profile.yaml` (addresses, domains, subject, date, attachment types) are applied to the mail; folder rules only apply to IMAP. A mail matching several profiles is filed into each; one matching none into `~/imapArc/00_Mails`. If it lies in `eml-input/<profile>/` or `eml-error/<profile>/`, that place decides. Once the PDF exists the `.eml` moves to the `eml-archive`; if rendering fails, to `eml-error`. The source file only disappears when the copy has been written.
 
 A **right-click** does the same in the file manager, on selected `.eml` files and whole folders: on macOS **Services → "Mit imapArc archivieren"**, on Linux **Open With** (Nautilus, Dolphin, Thunar). Set it up or renew it with `imaparc install-service`.
 
-> **Remote images** are loaded by default with `imaparc eml` (with `render` only where the profile allows it): a mail picked out by hand should look the way it was set. That fetches tracking pixels too. `--no-remote-images` turns it off.
+> **Remote images** are loaded by default with `imaparc eml` (with `render` only where the profile allows it): a mail picked out by hand should look the way it was set. That fetches tracking pixels too. If then even one image does not load — host unreachable, timed out, or "not found" — the mail counts as not rendered correctly and goes to `eml-error`; the note names every address concerned. `--no-remote-images` deliberately does without remote images.
 
 ### Working with the PDFs
 
@@ -178,10 +180,20 @@ imaparc extract --all a.pdf     # and the embedded attachments
 
 Both write to the current directory (or `--output`), never overwrite, and do not touch the archive.
 
+### When a mail fails
+
+```bash
+cat ~/imapArc/eml-error/Hetzner/*.error.txt        # why?
+imaparc eml ~/imapArc/eml-error/Hetzner            # try again
+imaparc eml --no-remote-images ~/imapArc/eml-error/Hetzner   # archive without remote images
+```
+
+A mail fails when its HTML rendition cannot be rendered, when — with remote images allowed — one of them does not load, or on any other error. No PDF is written then: better none than one that silently lacks something. The `.error.txt` beside the `.eml` gives the reason, the time and the addresses concerned. Once the mail is rendered successfully, the `.eml` and its note disappear from `eml-error`.
+
 ### Checking the archive
 
 ```bash
-imaparc verify           # mail without a PDF, duplicate PDFs, leftovers of aborted runs
+imaparc verify           # waiting and failed mail, mail without a PDF, duplicate PDFs
 imaparc verify --deep    # also read every file: is the embedded mail intact?
 imaparc doctor           # the installation: tools, browser, configuration, login
 ```
@@ -191,7 +203,7 @@ imaparc doctor           # the installation: tools, browser, configuration, logi
 ### Back onto the server
 
 ```bash
-imaparc restore ~/imapArc/eml-Archiv/Hetzner --folder Archiv --dry-run
+imaparc restore ~/imapArc/eml-archive/Hetzner --folder Archiv --dry-run
 ```
 
 `restore` uploads archived `.eml` back onto an IMAP server — after changing provider, say. Repeatable: what is already there is recognised and not added twice.
@@ -202,27 +214,27 @@ imaparc restore ~/imapArc/eml-Archiv/Hetzner --folder Archiv --dry-run
 - **Times are local time** of the machine, with the daylight-saving rule valid on the mail's date — in the file name and in the header block, which states the offset as well (`19.10.2026, 11:32 (UTC+2)`).
 - **One run at a time.** A second one (`render`, `all`, `eml` — a right-click during a scheduled run, say) waits.
 - **Names are no identity.** An `.eml` and its PDF usually share a name, but need not (collisions, renamed profiles). What counts is the fingerprint in the PDF.
-- **PDF/A-3b** is checked with veraPDF and reported in the run. A PDF that is not conformant because of an exotic attachment is kept all the same.
+- **PDF/A-3b** is checked with veraPDF and reported in the run. A PDF that is not conformant because of an exotic attachment is kept all the same, and its mail stays in the `eml-archive` — the content is complete, only the standard is violated.
 - **Nothing is loaded** by `render` unless the profile allows it: remote resources and tracking pixels are stripped before rendering.
-- **Long runs:** `-v` shows every mail, `-vv` details, `-Q` is silent; `--log-file` records in any case. A mail that fails is named in the summary, and the run goes on.
+- **Long runs:** `-v` shows every mail, `-vv` details, `-Q` is silent; `--log-file` records in any case. A mail that fails is named in the summary with the reason, and the run goes on.
 
 ## Re-rendering an archive with a newer version
 
-`render` skips every mail that already has a PDF. To rebuild older PDFs with a newer version, set them aside first — but only those whose `.eml` provably still exists. There are three steps for that (they need `uv` and `pdftotext`):
+`render` only reads the input, never the archive. To rebuild older PDFs with a newer version, set them aside — but only those whose `.eml` provably still exists — and deliberately return their mail to the input. There are three steps for that (they need `uv` and `pdftotext`):
 
 ```bash
 ./scripts/rerender-list.sh ~ ~/rerender                 # 1. read-only: what can be rebuilt?
 ./scripts/rerender-apply.sh ~/rerender/rerender.txt --move-to ~/imapArc/pdf-Löscharchiv
-bash ~/rerender/collect.sh                              # 2. loose .eml into ~/imapArc/emlinput
+bash ~/rerender/collect.sh                              # 2. mail back into ~/imapArc/eml-input
 bash ~/rerender/render.sh                               # 3. render everything again
 ```
 
 - **`rerender-list.sh`** finds every imapArc PDF below the given directory and checks by fingerprint whether its `.eml` exists (for very old folders without a fingerprint: by Message-ID **and** the PDF's own text). `rerender.txt` holds what can safely be rebuilt, `keep.txt` the rest with a reason, `loose.txt` every `.eml` outside the archive.
 - **`rerender-apply.sh`** re-checks the list, asks for confirmation and moves (`--move-to`, reversible) or deletes (`--delete`).
-- **`collect.sh`** gathers loose `.eml` in `~/imapArc/emlinput`; `emlinput.log` records where each came from. That is the place to weed before rendering.
-- **`render.sh`** runs `imaparc render` for the profiles and `imaparc eml` for the rest.
+- **`collect.sh`** returns every archived mail whose PDF is missing to `eml-input/<profile>/` and gathers loose `.eml` in `~/imapArc/eml-input`; `collect.log` records every move. That is the place to weed before rendering.
+- **`render.sh`** runs `imaparc render` for the profiles and `imaparc eml` for everything else in the input.
 
-`eml-Archiv/`, `emlinput/` and `pdf-Löscharchiv/` are never searched. Every step can be started again after an interruption.
+The `eml-*` directories and `pdf-Löscharchiv/` are never searched for PDFs. Every step can be started again after an interruption.
 
 ## Commands and options
 

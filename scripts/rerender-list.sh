@@ -7,11 +7,11 @@ set -euo pipefail
 #   ./scripts/rerender-list.sh ROOT OUT_DIR [--exclude DIR]... [--config FILE]
 #
 # ROOT is searched for imapArc archives (e.g. ~ or ~/imapArc): flat profile
-# archives (<profile>/<mail>.pdf, the .eml in eml-Archiv/<profile>), per-mail
+# archives (<profile>/<mail>.pdf, the .eml in eml-archive/<profile>), per-mail
 # folders of older versions (<profile>/pdf/<mail>/) and folders written by older
-# `imaparc eml` (<dir>/<mail>/ with the .eml inside). Library/, .Trash,
-# eml-Archiv/, emlinput/, pdf-Löscharchiv/ and dot-directories are skipped, as
-# is every --exclude DIR (e.g. a previous --move-to target).
+# `imaparc eml` (<dir>/<mail>/ with the .eml inside). Library/, .Trash, the eml-*
+# directories, pdf-Löscharchiv/ and dot-directories are skipped, as is every
+# --exclude DIR (e.g. a previous --move-to target).
 # --config names the profile.yaml whose eml/ inboxes `imaparc render` covers
 # (default ~/.config/imaparc/profile.yaml).
 #
@@ -24,7 +24,7 @@ set -euo pipefail
 #                    no-pdf-text       PDF missing or without a text layer
 #                    content-mismatch  the PDF does not show the candidate .eml
 #   archives.tsv   the archives found
-#   loose.txt      every other .eml below ROOT, for `imaparc eml` to file away
+#   loose.txt      every other .eml below ROOT, for collect.sh to gather
 #
 # Proof is the sha256 the PDF (or its folder's manifest) records or, for
 # manifests older than 26.8.12, the PDF's own text matching the .eml (see

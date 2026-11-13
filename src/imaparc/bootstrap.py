@@ -36,10 +36,12 @@ IMAP_PRIVAT_SSL=true                 # Optional, default true (true/1/yes/on).
 PROFILE_HEADER = """\
 # imapArc central profiles. Accounts live next to this file in .env
 #
-# Each profile picks matching mail from one account into eml-Archiv/<output
-# name>/ beside <output>, and (when pdf: true) also renders each mail to
+# Each profile picks matching mail from one account into eml-input/<output
+# name>/ beside <output>, and (when pdf: true) renders each mail to
 # <output>/<basename>.pdf — mail + attachment pages, with bookmarks, the .eml
-# and every attachment that could not become pages embedded.
+# and every attachment that could not become pages embedded. A rendered mail's
+# .eml moves to eml-archive/<output name>/, one that cannot be rendered
+# correctly to eml-error/<output name>/ with a note saying why.
 #
 # Required per profile: name, account, output. Everything else is optional and
 # shown commented below with its default — uncomment what you need. Add another
