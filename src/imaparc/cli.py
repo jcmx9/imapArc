@@ -26,6 +26,7 @@ from imaparc.doctor import Status, exit_code, run_checks
 from imaparc.exceptions import (
     BrowserLaunchError,
     ImapArcError,
+    ImapConnectError,
     LockError,
     SourceError,
     ToolNotFoundError,
@@ -678,8 +679,12 @@ def restore(
         return
 
     chosen = _select_account(accounts, account)
-    with ImapConnection(chosen) as conn:
-        results = restore_files(conn, files, folder=folder, dry_run=dry_run)
+    try:
+        with ImapConnection(chosen) as conn:
+            results = restore_files(conn, files, folder=folder, dry_run=dry_run)
+    except ImapConnectError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     if verbosity > 0 or dry_run:
         typer.echo(summarise(results))
     raise typer.Exit(

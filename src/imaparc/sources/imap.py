@@ -24,9 +24,10 @@ from types import TracebackType
 from typing import Any, Self
 
 from imapclient import IMAPClient
+from imapclient.exceptions import LoginError
 
 from imaparc.accounts import Account
-from imaparc.exceptions import ImapArcError
+from imaparc.exceptions import ImapArcError, ImapConnectError
 from imaparc.mail.models import MailHeaders
 
 logger = logging.getLogger(__name__)
@@ -133,17 +134,34 @@ class ImapConnection:
         self._client: IMAPClient | None = None
 
     def __enter__(self) -> Self:
-        client = IMAPClient(
-            self._account.host,
-            port=self._account.port,
-            ssl=self._account.ssl,
-            timeout=self._timeout,
-        )
+        """Connect and log in.
+
+        Raises:
+            ImapConnectError: The server is unreachable (no network, wrong
+                host, timeout, TLS failure) or refused the login — expected
+                failures, reported in one line rather than as a traceback.
+        """
+        account = self._account
+        where = f"{account.host}:{account.port}"
+        try:
+            client = IMAPClient(
+                account.host, port=account.port, ssl=account.ssl, timeout=self._timeout
+            )
+        except OSError as exc:  # socket, DNS, timeout and TLS errors alike
+            reason = exc.strerror or str(exc) or type(exc).__name__
+            raise ImapConnectError(f"cannot reach {where}: {reason}") from exc
         # Keep the offsets the server reports. imapclient's default converts
         # every date to naive local time with *today's* UTC offset, which puts a
         # summer mail fetched in winter an hour off; naming converts properly.
         client.normalise_times = False
-        client.login(self._account.user, self._account.password.get_secret_value())
+        try:
+            client.login(account.user, account.password.get_secret_value())
+        except LoginError as exc:
+            with contextlib.suppress(OSError):
+                client.shutdown()
+            raise ImapConnectError(
+                f"login as {account.user} at {where} refused: {exc}"
+            ) from exc
         self._client = client
         return self
 
