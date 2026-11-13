@@ -46,7 +46,13 @@ from imaparc.service import (
 from imaparc.sources.imap import ImapConnection
 from imaparc.state import StateStore
 from imaparc.storage import run_lock
-from imaparc.verify import Finding, Severity, verify_profile
+from imaparc.verify import (
+    Finding,
+    Severity,
+    unclaimed_profiles,
+    verify_loose,
+    verify_profile,
+)
 from imaparc.verify import exit_code as verify_exit_code
 
 logger = logging.getLogger(__name__)
@@ -798,9 +804,14 @@ def verify(
     except ConfigError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    profiles = _select_profiles(profiles, only_profile)
+    # Without --profile, also what no profile covers: 00_Mails, the archive of
+    # a profile since removed, loose mail in the eml-input.
+    extra = [] if only_profile else unclaimed_profiles(profiles)
+    loose = [] if only_profile else verify_loose(profiles)
+    profiles = [*_select_profiles(profiles, only_profile), *extra]
 
     findings = [f for p in profiles for f in verify_profile(p, deep=deep)]
+    findings += loose
     for line in _verify_lines(findings, verbose=verbose):
         console.print(line)
 

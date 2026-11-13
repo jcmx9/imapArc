@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **`verify` also checks what no profile covers.** Mail filed into `00_Mails`
+  (or left behind by a profile removed from `profile.yaml`) was not checked at
+  all, so a mail waiting or failed there showed up nowhere. Such directories
+  are now verified like a profile's, and loose mail in the root of `eml-input`
+  or `eml-error` is reported as well.
+
 ## [26.11.15] - 2026-11-13
 
 ### Changed

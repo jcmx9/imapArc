@@ -29,6 +29,10 @@ from imaparc.pipeline import (
     archive_entries,
 )
 from imaparc.profiles import (
+    EML_ARCHIVE,
+    EML_ERROR,
+    EML_INPUT,
+    LEGACY_EML_ARCHIVE,
     Profile,
     archived_eml_dir,
     eml_dirs,
@@ -343,6 +347,57 @@ def verify_profile(profile: Profile, *, deep: bool = False) -> list[Finding]:
         ),
         *(_deep_findings(entries, present, profile.name) if deep else []),
     ]
+
+
+def unclaimed_profiles(profiles: list[Profile]) -> list[Profile]:
+    """Stand-in profiles for mail directories no configured profile covers.
+
+    ``imaparc eml`` files mail that matches no profile into ``00_Mails``, and a
+    profile may have been removed from ``profile.yaml`` while its archive
+    stayed. Such directories hold mail and PDFs like any other, so they are
+    checked like any other — or a mail waiting or failed there would be
+    reported nowhere.
+    """
+    claimed = {p.output.resolve() for p in profiles}
+    found: dict[Path, Profile] = {}
+    for root in sorted({p.output.parent for p in profiles}):
+        for group in (EML_INPUT, EML_ARCHIVE, EML_ERROR, LEGACY_EML_ARCHIVE):
+            directory = root / group
+            if not directory.is_dir():
+                continue
+            for entry in sorted(directory.iterdir()):
+                output = root / entry.name
+                if (
+                    entry.is_dir()
+                    and not entry.name.startswith(".")
+                    and output.resolve() not in claimed
+                ):
+                    found.setdefault(
+                        output,
+                        Profile(name=entry.name, account="-", output=output, pdf=True),
+                    )
+    return list(found.values())
+
+
+def verify_loose(profiles: list[Profile]) -> list[Finding]:
+    """Mail lying directly in an ``eml-input`` or ``eml-error`` directory.
+
+    Not in a profile's subdirectory: dropped there by hand, or collected by the
+    rerender scripts. It belongs to no profile yet, so it is reported under a
+    name of its own.
+    """
+    findings: list[Finding] = []
+    for root in sorted({p.output.parent for p in profiles}):
+        findings += _waiting(
+            root / EML_INPUT, "pending", "wait in eml-input for a render", "(loose)"
+        )
+        findings += _waiting(
+            root / EML_ERROR,
+            "failed",
+            "could not be rendered (see the .error.txt beside each)",
+            "(loose)",
+        )
+    return findings
 
 
 def exit_code(findings: list[Finding]) -> int:
