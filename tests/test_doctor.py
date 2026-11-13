@@ -151,3 +151,47 @@ def test_chromium_check_accepts_the_matching_build(
     monkeypatch.setattr("imaparc.doctor.chromium_revision", lambda: "1234")
 
     assert _chromium_check().status is Status.OK
+
+
+# --- OCR: optional, so never more than a warning ------------------------------
+
+
+def test_missing_ocr_tools_are_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from imaparc.doctor import _ocr_check
+
+    monkeypatch.setattr("imaparc.doctor.shutil.which", lambda _cmd: None)
+
+    check = _ocr_check(tmp_path / "none.yaml")
+
+    assert check.status is Status.WARN
+    assert "ocrmypdf and tesseract" in check.detail
+
+
+def test_missing_language_data_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from imaparc.doctor import _ocr_check
+
+    monkeypatch.setattr("imaparc.doctor.shutil.which", lambda cmd: f"/usr/bin/{cmd}")
+    monkeypatch.setattr(
+        "imaparc.doctor.available_languages", lambda _t: frozenset({"eng", "osd"})
+    )
+
+    check = _ocr_check(tmp_path / "none.yaml")
+
+    assert check.status is Status.WARN and "deu" in check.detail
+
+
+def test_ocr_with_its_languages_is_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from imaparc.doctor import _ocr_check
+
+    monkeypatch.setattr("imaparc.doctor.shutil.which", lambda cmd: f"/usr/bin/{cmd}")
+    monkeypatch.setattr(
+        "imaparc.doctor.available_languages", lambda _t: frozenset({"deu", "eng"})
+    )
+
+    assert _ocr_check(tmp_path / "none.yaml").status is Status.OK

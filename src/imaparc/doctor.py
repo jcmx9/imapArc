@@ -19,8 +19,9 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from imaparc.accounts import Account, load_accounts
+from imaparc.accounts import Account, ConfigError, load_accounts
 from imaparc.config import REQUIRED_TOOLS, default_icc_profile
+from imaparc.pdf.ocr import available_languages
 from imaparc.profiles import load_profiles
 from imaparc.service import SERVICE_NAME, SERVICES_DIR
 
@@ -176,6 +177,44 @@ def _login_check(account: Account) -> Check:
     return Check(f"login {account.name}", Status.OK, f"{account.user}@{account.host}")
 
 
+def _ocr_check(profile_file: Path) -> Check:
+    """ocrmypdf + Tesseract with the languages the profiles ask for.
+
+    Optional: without them imapArc renders as before and scanned attachment
+    pages simply stay unsearchable — hence a warning, never a failure.
+    """
+    ocrmypdf, tesseract = shutil.which("ocrmypdf"), shutil.which("tesseract")
+    if not ocrmypdf or not tesseract:
+        missing = " and ".join(
+            name
+            for name, found in (("ocrmypdf", ocrmypdf), ("tesseract", tesseract))
+            if not found
+        )
+        return Check(
+            "OCR",
+            Status.WARN,
+            f"{missing} not found — scanned attachments stay unsearchable",
+        )
+    wanted = {"deu", "eng"}
+    try:
+        if profile_file.exists():
+            for profile in load_profiles(profile_file):
+                if profile.ocr:
+                    wanted |= set(profile.ocr_languages.split("+"))
+    except ConfigError:
+        pass  # reported by the profile.yaml check
+    installed = available_languages(Path(tesseract))
+    lacking = sorted(wanted - installed)
+    if lacking:
+        return Check(
+            "OCR",
+            Status.WARN,
+            f"Tesseract lacks language data for {', '.join(lacking)} "
+            "(e.g. brew install tesseract-lang / apt install tesseract-ocr-deu)",
+        )
+    return Check("OCR", Status.OK, f"{ocrmypdf} ({'+'.join(sorted(wanted))})")
+
+
 def run_checks(
     *,
     env_file: Path,
@@ -190,7 +229,12 @@ def run_checks(
         offline: Skip the IMAP logins, which are the only checks that use the
             network and the only ones with a visible side effect on a server.
     """
-    checks = [*_tool_checks(), _chromium_check(), _icc_check()]
+    checks = [
+        *_tool_checks(),
+        _chromium_check(),
+        _icc_check(),
+        _ocr_check(profile_file),
+    ]
     profiles_check, _count = _profiles_check(profile_file)
     accounts_check, accounts = _accounts_check(env_file)
     checks += [profiles_check, accounts_check, _service_check()]

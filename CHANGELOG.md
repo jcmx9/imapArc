@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Scanned attachments become searchable.** An attachment page that is an
+  image with no text at all, or mostly image with hardly any text, gets an
+  invisible text layer (ocrmypdf + Tesseract, `deu+eng` by default) in the
+  rendered PDF. Pages that already carry text are left alone, and the original
+  attachment in the embedded `.eml` stays untouched. A failed recognition does
+  not stop the mail — the content is complete, only not searchable — and the
+  run lists it. Switch off with `--no-ocr` (`render`, `all`, `eml`) or
+  `ocr: false` per profile; `ocr_languages` picks the languages. The tools are
+  optional; `doctor` warns when they or a language are missing, and
+  `install.sh` installs them.
+
 ## [26.11.16] - 2026-11-13
 
 ### Fixed

@@ -152,6 +152,7 @@ async def run_adhoc(
     name: str,
     tools: ToolPaths,
     allow_remote: bool = True,
+    ocr: bool = True,
     jobs: int = 4,
     gs_jobs: int = 2,
     verbosity: int = 1,
@@ -178,6 +179,7 @@ async def run_adhoc(
         name: Profile name used for unmatched mail (the middle of its name).
         tools: Resolved gs/qpdf/verapdf paths.
         allow_remote: Whether remote images may be fetched while rendering.
+        ocr: False switches text recognition off for every profile involved.
         jobs: Mails rendered concurrently.
         gs_jobs: Ghostscript conversions at once. Deliberately lower than
             ``jobs``: one conversion holds a whole document in memory.
@@ -209,6 +211,8 @@ async def run_adhoc(
                     jobs=jobs,
                     gs_jobs=gs_jobs,
                     allow_remote=allow_remote,
+                    ocr=ocr and profile.ocr,
+                    ocr_languages=profile.ocr_languages,
                     filename_pattern=profile.filename_pattern,
                     date_format=profile.date_format,
                     max_attachment_bytes=profile.max_attachment_bytes,

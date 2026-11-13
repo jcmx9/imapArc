@@ -64,6 +64,16 @@ class RunReport:
                 f"{len(self.incomplete)} with attachments not shown as pages "
                 "(info page instead; the file is embedded in the PDF)"
             )
+        unsearchable = [name for r in self.written for name in r.ocr_failed]
+        if unsearchable:
+            lines.append(
+                f"{len(unsearchable)} attachment(s) could not be made searchable "
+                "(text recognition failed; the pages are in the PDF as sent):"
+            )
+            for name in unsearchable[:10]:
+                lines.append(f"  - {name}")
+            if len(unsearchable) > 10:
+                lines.append(f"  … and {len(unsearchable) - 10} more")
         if self.non_compliant:
             lines.append(
                 f"{len(self.non_compliant)} not PDF/A-3b compliant (kept anyway):"

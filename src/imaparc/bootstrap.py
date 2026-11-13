@@ -96,8 +96,19 @@ _PROFILE_OPTIONAL = [
         "gs_jobs: 2",
     ),
     (
+        "ocr",
+        "recognise text in scanned attachment pages (needs ocrmypdf + "
+        "Tesseract); the original stays unchanged in the .eml",
+        "ocr: true",
+    ),
+    (
+        "ocr_languages",
+        "Tesseract languages for that, '+'-separated",
+        "ocr_languages: deu+eng",
+    ),
+    (
         "filename_pattern",
-        "name scheme for the .eml and its PDF folder; placeholders {date}, "
+        "name scheme for the .eml and its PDF; placeholders {date}, "
         "{profile}, {subject}",
         "filename_pattern: '{date}_{profile}_{subject}'",
     ),

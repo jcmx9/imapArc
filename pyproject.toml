@@ -112,6 +112,7 @@ markers = [
     "slow: end-to-end tests that run the full pipeline",
     "requires_chromium: needs a Playwright Chromium install",
     "requires_tools: needs gs/qpdf/verapdf on PATH",
+    "requires_ocr: needs ocrmypdf and tesseract on PATH",
 ]
 
 [tool.mypy]
