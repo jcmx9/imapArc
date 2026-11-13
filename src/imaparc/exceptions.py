@@ -19,6 +19,10 @@ class SourceError(ImapArcError):
     """A mail source (e.g. an ``eml/`` directory) could not be read."""
 
 
+class ImapConnectError(ImapArcError):
+    """An IMAP server could not be reached, or refused the login."""
+
+
 class BrowserLaunchError(ImapArcError):
     """Chromium could not be started, typically because its build is missing."""
 

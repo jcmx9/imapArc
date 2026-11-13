@@ -5,6 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **An unreachable IMAP server is one line, not a traceback.** No network, a
+  wrong host, a timeout or a refused login now read e.g. `account 'privat'
+  failed: cannot reach imap.example.org:993: No route to host` (also in
+  `restore` and `doctor`) instead of a page of Python internals.
+
 ## [26.11.17] - 2026-11-13
 
 ### Added

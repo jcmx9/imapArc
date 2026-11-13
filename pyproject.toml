@@ -121,7 +121,7 @@ strict = true
 
 [[tool.mypy.overrides]]
 # None of these ship type stubs or a py.typed marker.
-module = ["img2pdf", "pillow_heif", "imapclient"]
+module = ["img2pdf", "pillow_heif", "imapclient", "imapclient.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
