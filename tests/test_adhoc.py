@@ -134,7 +134,7 @@ async def test_unmatched_mail_is_filed_into_00_mails(tmp_path: Path) -> None:
     assert basename.endswith("_mail_Rechnung_Juli")
     assert sorted(p.name for p in (root / "00_Mails").iterdir()) == [f"{basename}.pdf"]
     # The PDF exists, so the .eml moved on to the archive — and left the inbox.
-    archived = root / "eml-Archiv" / "00_Mails" / f"{basename}.eml"
+    archived = root / "eml-archive" / "00_Mails" / f"{basename}.eml"
     assert archived.read_bytes() == build_mail(subject="Rechnung Juli")
     assert not mail.exists()
 
@@ -157,7 +157,7 @@ async def test_the_profile_is_derived_from_the_headers(tmp_path: Path) -> None:
     basename = report.written[0].basename
     assert "_Amt_" in basename
     assert (root / "Amt" / f"{basename}.pdf").is_file()
-    assert (root / "eml-Archiv" / "Amt" / f"{basename}.eml").is_file()
+    assert (root / "eml-archive" / "Amt" / f"{basename}.eml").is_file()
     assert not (root / "Other").exists()
     assert not (root / "00_Mails").exists()
     assert not mail.exists()
@@ -181,7 +181,7 @@ async def test_a_mail_matching_two_profiles_is_filed_into_both(tmp_path: Path) -
 
     assert len(report.written) == 2
     for name in ("Amt", "Anwalt"):
-        [archived] = (root / "eml-Archiv" / name).iterdir()
+        [archived] = (root / "eml-archive" / name).iterdir()
         assert archived.read_bytes() == raw
         assert (root / name / f"{archived.stem}.pdf").is_file()
     assert not mail.exists()
@@ -231,7 +231,7 @@ async def test_a_second_copy_is_archived_without_a_second_folder(
     assert second.skipped
     assert sorted(p.name for p in pdf_dir.iterdir()) == before
     # The identical bytes are already archived: reused, and the copy is gone.
-    archived = list((root / "eml-Archiv" / "00_Mails").iterdir())
+    archived = list((root / "eml-archive" / "00_Mails").iterdir())
     assert [p.stem for p in archived] == [first.written[0].basename]
     assert not again.exists()
 
@@ -245,7 +245,7 @@ async def test_a_mail_rendered_from_the_archive_is_not_deleted(
     """Archiving a file onto itself must not count it as its own duplicate."""
     root = tmp_path / "arc"
     first = await _run([_eml(tmp_path / "in" / "a.eml")], root)
-    archived = root / "eml-Archiv" / "00_Mails" / f"{first.written[0].basename}.eml"
+    archived = root / "eml-archive" / "00_Mails" / f"{first.written[0].basename}.eml"
 
     await _run([archived], root)
 
@@ -276,10 +276,10 @@ async def test_an_unreadable_mail_does_not_abort_the_run(tmp_path: Path) -> None
 @pytest.mark.requires_chromium
 @pytest.mark.requires_tools
 @pytest.mark.slow
-async def test_a_mail_that_breaks_rendering_is_counted_and_kept(
+async def test_a_mail_that_breaks_rendering_goes_to_eml_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Whatever a mail provokes, the run goes on and names the mail."""
+    """No PDF, the .eml in eml-error with the reason beside it, the run goes on."""
     from imaparc import adhoc
 
     real = adhoc.render_mail
@@ -290,16 +290,95 @@ async def test_a_mail_that_breaks_rendering_is_counted_and_kept(
         return await real(parsed, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(adhoc, "render_mail", render)
-    inbox = tmp_path / "in"
+    inbox, root = tmp_path / "in", tmp_path / "arc"
     broken = _eml(inbox / "a.eml", subject="Broken")
     good = _eml(inbox / "b.eml", subject="Good One")
 
-    report = await _run(collect_eml([inbox]), tmp_path / "arc", verbosity=0)
+    report = await _run(collect_eml([inbox]), root, verbosity=0)
 
-    assert report.failed == [str(broken)]
-    assert broken.exists()  # never archived without its PDF
+    assert [path for path, _ in report.failed] == [str(broken)]
+    assert "something only this mail triggers" in report.failed[0][1]
+    # The source is emptied either way: one mail archived, one in eml-error.
+    assert list(inbox.iterdir()) == []
+    error_dir = root / "eml-error" / "00_Mails"
+    assert (error_dir / "a.eml").read_bytes() == build_mail(subject="Broken")
+    note = (error_dir / "a.error.txt").read_text()
+    assert "ValueError: something only this mail triggers" in note
+    assert "no PDF was written" in note
     assert len(report.written) == 1 and not good.exists()
+    assert len(list((root / "00_Mails").glob("*.pdf"))) == 1
     assert "1 FAILED to render" in report.summary()
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_a_failed_mail_can_be_tried_again_from_eml_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Passing the error directory renders it; the note goes with the success."""
+    from imaparc import adhoc
+
+    real = adhoc.render_mail
+    fail = True
+
+    async def render(parsed: object, **kwargs: object) -> object:
+        if fail:
+            raise ValueError("first time only")
+        return await real(parsed, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(adhoc, "render_mail", render)
+    root = tmp_path / "arc"
+    await _run([_eml(tmp_path / "in" / "a.eml")], root, verbosity=0)
+    error_dir = root / "eml-error" / "00_Mails"
+    assert (error_dir / "a.error.txt").is_file()
+
+    fail = False
+    report = await _run(collect_eml([error_dir]), root, verbosity=0)
+
+    assert len(report.written) == 1 and report.failed == []
+    assert list(error_dir.iterdir()) == []  # the .eml and its note are gone
+    assert len(list((root / "eml-archive" / "00_Mails").glob("*.eml"))) == 1
+
+
+@pytest.mark.requires_chromium
+@pytest.mark.requires_tools
+@pytest.mark.slow
+async def test_a_dead_remote_image_means_no_pdf(tmp_path: Path) -> None:
+    """With remote images on, an image that does not load is not left out
+    silently: the mail fails, and the note names the resource."""
+    import socket
+
+    with socket.socket() as probe:  # a port nothing listens on
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    mail = tmp_path / "in" / "a.eml"
+    mail.parent.mkdir()
+    mail.write_bytes(
+        build_mail(
+            subject="Newsletter",
+            html=(
+                "<html><body><table><tr><td>Angebot</td></tr></table>"
+                f'<img src="http://127.0.0.1:{port}/gone.png"></body></html>'
+            ),
+        )
+    )
+    root = tmp_path / "arc"
+
+    report = await _run([mail], root, verbosity=0)
+
+    assert report.written == []
+    assert not (root / "00_Mails").exists() or not list((root / "00_Mails").iterdir())
+    note = (root / "eml-error" / "00_Mails" / "a.error.txt").read_text()
+    assert "remote resources did not load" in note
+    assert f"http://127.0.0.1:{port}/gone.png" in note
+
+    # The same mail renders once remote images are off — that is the choice
+    # to archive it without them.
+    again = await _run(
+        collect_eml([root / "eml-error" / "00_Mails"]), root, allow_remote=False
+    )
+    assert len(again.written) == 1
 
 
 # 1x1 transparent PNG, served to the browser in the remote-image test.
@@ -438,4 +517,4 @@ async def test_two_copies_of_one_mail_produce_one_folder(tmp_path: Path) -> None
     # Both copies end up archived, even the one skipped while its twin was
     # still rendering: the archiving pass runs after every render finished.
     assert list(inbox.glob("*.eml")) == []
-    assert len(list((tmp_path / "arc" / "eml-Archiv" / "00_Mails").iterdir())) == 1
+    assert len(list((tmp_path / "arc" / "eml-archive" / "00_Mails").iterdir())) == 1

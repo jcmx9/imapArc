@@ -35,7 +35,7 @@ from imaparc.attachments.classify import effective_mime
 from imaparc.attachments.models import ConversionOutcome
 from imaparc.attachments.to_pdf import convert_attachment
 from imaparc.config import RunConfig
-from imaparc.exceptions import ParseError, RenderError
+from imaparc.exceptions import ParseError
 from imaparc.html.inline import inline_resources
 from imaparc.html.render_html import (
     prepend_header,
@@ -94,7 +94,6 @@ class RenderResult:
     basename: str
     written: bool
     skipped: bool = False
-    html_rendered: bool = True
     complete: bool = True  # every attachment became pages
     combined_pdf: Path | None = None
     attachments: tuple[AttachmentResult, ...] = field(default_factory=tuple)
@@ -152,7 +151,7 @@ async def render_mail(
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         async with pool.context() as ctx:
-            mail_part, html_ok = await _render_mail_part(ctx, parsed, config)
+            mail_part = await _render_mail_part(ctx, parsed, config)
             attachment_parts, results, kept = await _render_attachments(
                 ctx, parsed, work, config, eml_name
             )
@@ -182,7 +181,6 @@ async def render_mail(
     return RenderResult(
         target.stem,
         written=True,
-        html_rendered=html_ok,
         complete=all(r.outcome.ok for r in results),
         combined_pdf=target,
         attachments=tuple(results),
@@ -443,14 +441,13 @@ async def _render_page(ctx: BrowserContext, html: str, config: RunConfig) -> byt
 
 async def _render_mail_part(
     ctx: BrowserContext, parsed: ParsedMail, config: RunConfig
-) -> tuple[list[_Part], bool]:
+) -> list[_Part]:
     """Render the mail body: overview + reflowed body, then the text version.
 
     The first part is bookmarked "E-Mail", each section separator by its title.
     """
     parts: list[_Part] = []
     date_str = format_date_human(parsed.headers.date)
-    html_ok = True
 
     # A mail whose HTML is only plain text in a trivial wrapper (no image, table,
     # link, list, heading, emphasis, background …) gets no HTML renditions: they
@@ -459,42 +456,41 @@ async def _render_mail_part(
         parsed.html_body or ""
     )
 
+    # A RenderError here is not caught: a mail whose HTML cannot be rendered —
+    # or, with remote content allowed, whose images do not all load — fails as
+    # a whole and gets no PDF. Until 26.11.14 it silently became a text-only
+    # PDF, which then stood for the mail for good.
     if html_is_visual and parsed.html_body:
-        try:
-            # Inline resolution needs the related resources (cid:/Content-Location
-            # parts nested in multipart/related), not just the real attachments.
-            prepared = inline_resources(
-                parsed.html_body,
-                parsed.attachments + parsed.inline_parts,
-                allow_remote=config.allow_remote,
-            )
-            body = prepend_header(
-                prepared.html, parsed.headers, show_bcc=True, date_str=date_str
-            )
-            reflowed = await render_html_to_pdf(
-                ctx, body, reflowed_rendition(), allow_remote=config.allow_remote
-            )
-            # The scaled one-page overview only helps when the mail spans more than
-            # one page; for a mail that already fits a single page it is just a
-            # smaller duplicate of the reflowed version, so skip it (and its
-            # separator — the reflowed then leads with the header).
-            if count_pages(reflowed) > 1:
-                parts.append(
-                    _Part(
-                        await render_html_to_pdf(
-                            ctx,
-                            body,
-                            faithful_rendition(),
-                            allow_remote=config.allow_remote,
-                        )
+        # Inline resolution needs the related resources (cid:/Content-Location
+        # parts nested in multipart/related), not just the real attachments.
+        prepared = inline_resources(
+            parsed.html_body,
+            parsed.attachments + parsed.inline_parts,
+            allow_remote=config.allow_remote,
+        )
+        body = prepend_header(
+            prepared.html, parsed.headers, show_bcc=True, date_str=date_str
+        )
+        reflowed = await render_html_to_pdf(
+            ctx, body, reflowed_rendition(), allow_remote=config.allow_remote
+        )
+        # The scaled one-page overview only helps when the mail spans more than
+        # one page; for a mail that already fits a single page it is just a
+        # smaller duplicate of the reflowed version, so skip it (and its
+        # separator — the reflowed then leads with the header).
+        if count_pages(reflowed) > 1:
+            parts.append(
+                _Part(
+                    await render_html_to_pdf(
+                        ctx,
+                        body,
+                        faithful_rendition(),
+                        allow_remote=config.allow_remote,
                     )
                 )
-                parts.append(await _separator(ctx, "Umbrochene Fassung", config))
-            parts.append(_Part(reflowed))
-        except RenderError:
-            logger.warning("HTML rendering failed; falling back to text only")
-            parts.clear()
-            html_ok = False
+            )
+            parts.append(await _separator(ctx, "Umbrochene Fassung", config))
+        parts.append(_Part(reflowed))
 
     # The plain-text version is always included: the mail's text/plain part, or —
     # for an HTML-only mail — one derived from the HTML.
@@ -524,7 +520,7 @@ async def _render_mail_part(
         parts.append(_Part(await _render_page(ctx, header_only, config)))
 
     parts[0] = _Part(parts[0].pdf, "E-Mail")
-    return parts, html_ok
+    return parts
 
 
 async def _separator(ctx: BrowserContext, title: str, config: RunConfig) -> _Part:
@@ -623,7 +619,7 @@ async def _render_attachments(
         attached = _attached_mail(att, config) if depth <= _MAX_MAIL_DEPTH else None
         if attached is not None:
             nested, nested_raw = attached
-            mail_parts, _html_ok = await _render_mail_part(ctx, nested, config)
+            mail_parts = await _render_mail_part(ctx, nested, config)
             pages = sum(count_pages(part.pdf) for part in mail_parts)
             separator = render_separator(label, att.filename, pages, size)
             parts.append(_Part(await _render_page(ctx, separator, config), mark))

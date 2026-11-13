@@ -126,7 +126,7 @@ def test_never_overwrites(tmp_path: Path) -> None:
 def test_refuses_to_write_into_the_archive(tmp_path: Path) -> None:
     """A second PDF recording the same mail there would count as a duplicate."""
     profile = tmp_path / "arc" / "P"
-    (tmp_path / "arc" / "eml-Archiv" / "P").mkdir(parents=True)
+    (tmp_path / "arc" / "eml-archive" / "P").mkdir(parents=True)
     pdf = _rendered(profile / "X.pdf")
 
     result = mail_only(pdf, profile)

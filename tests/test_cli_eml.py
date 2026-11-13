@@ -81,7 +81,7 @@ def test_renders_into_the_archive_and_archives_the_eml(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     [pdf] = (tmp_path / "arc" / "00_Mails").iterdir()
     assert pdf.suffix == ".pdf"
-    archive = tmp_path / "arc" / "eml-Archiv" / "00_Mails"
+    archive = tmp_path / "arc" / "eml-archive" / "00_Mails"
     assert (archive / f"{pdf.stem}.eml").is_file()
     assert not mail.exists()
 

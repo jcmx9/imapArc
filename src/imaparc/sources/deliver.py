@@ -11,8 +11,12 @@ collision is disambiguated (``…-2``), identical content is reused.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
+from imaparc import __version__
+from imaparc.exceptions import RemoteResourceError
+from imaparc.profiles import ERROR_NOTE_SUFFIX
 from imaparc.storage import DIR_MODE, make_dir, writable_dir, write_readonly
 
 
@@ -47,8 +51,8 @@ def deliver_eml(eml_dir: Path, raw: bytes, basename: str) -> Path:
     and a mail uploaded back to the server comes back under a fresh UID.
 
     Args:
-        eml_dir: The directory to deliver into — a profile's ``eml-Archiv``
-            directory (created if missing).
+        eml_dir: The directory to deliver into — a profile's ``eml-input``,
+            ``eml-archive`` or ``eml-error`` directory (created if missing).
         raw: The complete RFC-822 message bytes.
         basename: The shared base name (no extension).
 
@@ -57,7 +61,7 @@ def deliver_eml(eml_dir: Path, raw: bytes, basename: str) -> Path:
         newly written one (disambiguated when a *different* mail holds the name).
     """
     if not eml_dir.parent.exists():
-        # A directory imapArc creates for mail (the eml-Archiv) is private.
+        # A directory imapArc creates for mail (eml-input, …) is private.
         make_dir(eml_dir.parent, readonly=True)
     make_dir(eml_dir)
     existing = _already_delivered(eml_dir, raw)
@@ -96,4 +100,62 @@ def file_away(source: Path, raw: bytes, targets: list[tuple[Path, str]]) -> list
         # there now, so removing it could lose the newer content.
         return delivered
     source.unlink()
+    # A mail that failed before and is filed now needs its error note no more.
+    error_note(source).unlink(missing_ok=True)
     return delivered
+
+
+def error_note(eml: Path) -> Path:
+    """The note beside ``eml`` that says why it could not be rendered."""
+    return eml.with_name(f"{eml.stem}{ERROR_NOTE_SUFFIX}")
+
+
+def file_error(
+    source: Path,
+    raw: bytes,
+    error_dir: Path,
+    basename: str,
+    reason: str,
+    details: list[str] | None = None,
+) -> Path:
+    """Move a mail that could not be rendered correctly into ``error_dir``.
+
+    The ``.eml`` is delivered there exactly like into the archive (atomic,
+    never overwriting, an identical copy reused) and the source removed only
+    afterwards. Beside it ``<name>.error.txt`` records what went wrong, in
+    plain text a person — or a script — can read: the directory says *that* a
+    mail failed, the note says *why*. A mail that fails again from within the
+    error directory stays where it is and gets a fresh note.
+
+    Returns:
+        The path of the ``.eml`` in ``error_dir``.
+    """
+    [target] = file_away(source, raw, [(error_dir, basename)])
+    lines = [
+        "imapArc could not render this mail correctly; no PDF was written.",
+        "",
+        f"File:    {target.name}",
+        f"Source:  {source}",
+        f"Time:    {datetime.now().astimezone().isoformat(timespec='seconds')}",
+        f"Version: {__version__}",
+        f"Reason:  {reason}",
+    ]
+    if details:
+        lines += ["", "Details:", *(f"  - {detail}" for detail in details)]
+    lines += [
+        "",
+        "To try again, pass this file or its directory to `imaparc eml`.",
+    ]
+    note = error_note(target)
+    note.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return target
+
+
+def failure_reason(exc: BaseException) -> tuple[str, list[str]]:
+    """``(reason, details)`` for an error note, from what stopped the render."""
+    if isinstance(exc, RemoteResourceError):
+        return (
+            "remote resources did not load (the PDF would be incomplete)",
+            [f"{url} — {why}" for url, why in exc.failures],
+        )
+    return f"{type(exc).__name__}: {exc}", []

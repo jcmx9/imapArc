@@ -17,6 +17,7 @@ import pytest
 from imaparc.exceptions import BrowserLaunchError
 from imaparc.html.inline import inline_resources
 from imaparc.mail.models import AttachmentPart
+from imaparc.pdf.merge import count_pages
 from imaparc.render.browser import BrowserPool, build_launch_args, is_allowed_url
 from imaparc.render.geometry import (
     A4_HEIGHT_MM,
@@ -418,3 +419,79 @@ def test_place_on_a4_without_annotations_stays_clean() -> None:
 
     with pikepdf.open(io.BytesIO(placed)) as doc:
         assert "/Annots" not in doc.pages[0]
+
+
+# --- remote content that does not arrive -------------------------------------
+
+
+@pytest.mark.requires_chromium
+async def test_an_image_the_server_no_longer_has_fails_the_render() -> None:
+    """ "404 Not Found" is an answer, but the picture is still missing: with
+    remote content allowed the render must not quietly go on without it."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from imaparc.exceptions import RemoteResourceError
+
+    class _Gone(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _Gone)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    html = f'<html><body><p>x</p><img src="http://127.0.0.1:{port}/gone.png"></body></html>'
+    try:
+        async with (
+            BrowserPool(allow_remote=True) as pool,
+            pool.context() as ctx,
+        ):
+            with pytest.raises(RemoteResourceError) as caught:
+                await render_html_to_pdf(
+                    ctx, html, reflowed_rendition(), allow_remote=True
+                )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    assert caught.value.failures == [(f"http://127.0.0.1:{port}/gone.png", "HTTP 404")]
+
+
+@pytest.mark.requires_chromium
+async def test_a_host_that_never_answers_fails_the_render_too() -> None:
+    """A connection problem must not turn into a PDF that lacks the image."""
+    import socket
+
+    from imaparc.exceptions import RenderError
+
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(5)  # accepts, never answers
+        port = server.getsockname()[1]
+        html = f'<html><body><p>x</p><img src="http://127.0.0.1:{port}/n.png"></body></html>'
+        async with (
+            BrowserPool(timeout_ms=2500, allow_remote=True) as pool,
+            pool.context() as ctx,
+        ):
+            with pytest.raises(RenderError):
+                await render_html_to_pdf(
+                    ctx, html, reflowed_rendition(), allow_remote=True
+                )
+
+
+@pytest.mark.requires_chromium
+async def test_blocked_remote_content_is_policy_not_a_failure() -> None:
+    """Without remote content nothing is requested, so nothing can be missing
+    by accident — the image is left out on purpose."""
+    html = '<html><body><p>x</p><img src="http://192.0.2.1/never.png"></body></html>'
+    async with BrowserPool() as pool, pool.context() as ctx:
+        pdf = await render_html_to_pdf(ctx, html, reflowed_rendition())
+
+    assert count_pages(pdf) == 1

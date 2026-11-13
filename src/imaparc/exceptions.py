@@ -33,3 +33,21 @@ class PdfaConversionError(ImapArcError):
 
 class LockError(ImapArcError):
     """The run lock cannot be taken safely (see ``storage.run_lock``)."""
+
+
+class RemoteResourceError(RenderError):
+    """A remote resource of a mail did not load, so the page is incomplete.
+
+    Raised only when remote content is allowed: then every image the mail
+    refers to belongs to the rendition, and one that is missing — a timeout, a
+    dead host, a "404 Not Found" — means the PDF would silently lack content.
+    ``failures`` lists ``(url, reason)`` for the error note.
+    """
+
+    def __init__(self, failures: list[tuple[str, str]]) -> None:
+        self.failures = failures
+        shown = "; ".join(f"{url} ({reason})" for url, reason in failures[:3])
+        more = f" and {len(failures) - 3} more" if len(failures) > 3 else ""
+        super().__init__(
+            f"{len(failures)} remote resource(s) did not load: {shown}{more}"
+        )

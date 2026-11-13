@@ -119,7 +119,7 @@ def _flat(output: Path, name: str, raw: bytes) -> None:
 
 
 def _archived(output: Path, name: str, raw: bytes) -> None:
-    archive = output.parent / "eml-Archiv" / output.name
+    archive = output.parent / "eml-archive" / output.name
     archive.mkdir(parents=True, exist_ok=True)
     (archive / f"{name}.eml").write_bytes(raw)
 
@@ -254,7 +254,7 @@ def test_a_genuinely_unrendered_mail_is_still_reported(tmp_path: Path) -> None:
 
 
 def _archived_eml(tmp_path: Path, name: str, raw: bytes) -> None:
-    archive = tmp_path.parent / "eml-Archiv" / tmp_path.name
+    archive = tmp_path.parent / "eml-archive" / tmp_path.name
     archive.mkdir(parents=True, exist_ok=True)
     (archive / f"{name}.eml").write_bytes(raw)
 
@@ -293,6 +293,37 @@ def test_a_name_match_does_not_hide_an_unrendered_mail(tmp_path: Path) -> None:
 
     assert _kinds(findings) == {"unrendered"}
     assert "X" in findings[0].detail and "X-2" not in findings[0].detail
+
+
+# --- the directory a mail lies in is its state -------------------------------
+
+
+def test_mail_waiting_in_the_input_is_pending_not_unrendered(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    waiting = tmp_path / "eml-input" / "p"
+    waiting.mkdir(parents=True)
+    (waiting / "new.eml").write_bytes(b"RAW")
+
+    findings = verify_profile(_profile(output))
+
+    assert _kinds(findings) == {"pending"}
+    assert "1 mail(s) wait in eml-input" in findings[0].detail
+
+
+def test_mail_in_eml_error_is_reported_as_failed(tmp_path: Path) -> None:
+    output = tmp_path / "p"
+    _archived(output, "ok", b"RAW")
+    _flat(output, "ok", b"RAW")
+    failed = tmp_path / "eml-error" / "p"
+    failed.mkdir(parents=True)
+    (failed / "bad.eml").write_bytes(b"OTHER")
+    (failed / "bad.error.txt").write_text("why")
+
+    findings = verify_profile(_profile(output))
+
+    assert _kinds(findings) == {"failed"}
+    assert findings[0].severity is Severity.WARN
+    assert "bad" in findings[0].detail and "error.txt" in findings[0].detail
 
 
 # --- --deep: the checks that read every file -------------------------------

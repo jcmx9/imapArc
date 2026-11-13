@@ -25,8 +25,9 @@ class RunReport:
 
     results: list[RenderResult] = field(default_factory=list)
     non_compliant: list[str] = field(default_factory=list)
-    # Mails that could not be rendered at all (their .eml stays where it is).
-    failed: list[str] = field(default_factory=list)
+    # Mails that could not be rendered correctly: ``(path of the .eml as it was
+    # found, reason)``. They got no PDF; the .eml went to eml-error.
+    failed: list[tuple[str, str]] = field(default_factory=list)
 
     def add(self, result: RenderResult) -> None:
         self.results.append(result)
@@ -44,30 +45,24 @@ class RunReport:
         """Written mails with at least one attachment shown as an info page."""
         return [r for r in self.written if not r.complete]
 
-    @property
-    def html_fallback(self) -> list[RenderResult]:
-        return [r for r in self.written if not r.html_rendered]
-
     def summary(self) -> str:
         """Return a short human-readable summary."""
         lines = [f"{len(self.written)} written, {len(self.skipped)} skipped"]
         if self.failed:
             # First, and by name: a mail without a PDF is the one line here
             # that must not be read past.
-            lines.append(f"{len(self.failed)} FAILED to render (see the log):")
-            for path in self.failed[:10]:
-                lines.append(f"  - {Path(path).name}")
+            lines.append(
+                f"{len(self.failed)} FAILED to render — no PDF written, "
+                "the .eml is in eml-error with the reason beside it:"
+            )
+            for path, reason in self.failed[:10]:
+                lines.append(f"  - {Path(path).name}: {reason[:110]}")
             if len(self.failed) > 10:
                 lines.append(f"  … and {len(self.failed) - 10} more")
         if self.incomplete:
             lines.append(
                 f"{len(self.incomplete)} with attachments not shown as pages "
                 "(info page instead; the file is embedded in the PDF)"
-            )
-        if self.html_fallback:
-            lines.append(
-                f"{len(self.html_fallback)} fell back to the text version "
-                "(HTML rendering failed)"
             )
         if self.non_compliant:
             lines.append(

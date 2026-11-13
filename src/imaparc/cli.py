@@ -34,7 +34,7 @@ from imaparc.extract import extract as extract_from_pdf
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
 from imaparc.mailonly import mail_only
-from imaparc.profiles import Profile, load_profiles
+from imaparc.profiles import EML_INPUT, Profile, input_eml_dir, load_profiles
 from imaparc.render_run import run_render
 from imaparc.restore import RestoreOutcome, restore_files, summarise
 from imaparc.service import (
@@ -464,12 +464,14 @@ def render(
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
 ) -> None:
-    """Render each profile's archived mail to one PDF per mail.
+    """Render the mail waiting in each profile's eml-input to one PDF per mail.
 
     Renders **every** profile (the ``pdf`` flag is ignored here — asking to
-    render means render): the ``.eml`` in ``eml-Archiv/<profile>/`` become
-    ``<output>/<basename>.pdf``. A mail that already has its PDF is skipped.
-    Needs no ``.env``.
+    render means render). A mail whose PDF is written (or exists already)
+    moves from ``eml-input/<profile>/`` to ``eml-archive/<profile>/``; one that
+    cannot be rendered correctly gets no PDF and moves to
+    ``eml-error/<profile>/`` with a note saying why. The archive itself is never
+    rendered. Needs no ``.env``.
     """
     verbosity = _verbosity(silent, verbose, debug)
     setup_logging(verbosity, log_file)
@@ -514,10 +516,13 @@ def eml(
     """Render .eml files from anywhere into the archive.
 
     Each mail's profile is derived from its headers with the rules in
-    profile.yaml (IMAP folder rules are ignored); a mail matching several
-    profiles is filed into each, one matching none into <root>/00_Mails. The
-    PDF is written as <profile>/<basename>.pdf, and once it exists the .eml
-    moves to eml-Archiv/<profile>/ beside the profile directories.
+    profile.yaml (IMAP folder rules are ignored) — or from where it lies, if
+    that is a profile's eml-input or eml-error directory. A mail matching
+    several profiles is filed into each, one matching none into <root>/00_Mails.
+    The PDF is written as <profile>/<basename>.pdf, and once it exists the .eml
+    moves to eml-archive/<profile>/. A mail that cannot be rendered correctly
+    gets no PDF and moves to eml-error/<profile>/ with a note saying why; pass
+    that directory to try again.
 
     A directory argument takes the ``.eml`` files directly inside it, not in
     subfolders. Needs no ``.env`` and never touches the fetch state; without a
@@ -890,7 +895,7 @@ def fetch(
     verbose: _VerboseOpt = False,
     debug: _DebugOpt = False,
 ) -> None:
-    """Fetch new mail from IMAP into the profiles' eml-Archiv (no rendering).
+    """Fetch new mail from IMAP into the profiles' eml-input (no rendering).
 
     ``--dry-run`` only shows which mail each profile would take and what would
     happen to it on the server — nothing is written and nothing is touched.
@@ -949,7 +954,7 @@ def _do_fetch(
     dry_run: bool = False,
     no_server_actions: bool = False,
 ) -> None:
-    """Load config, then fetch the selected profiles into their eml-Archiv."""
+    """Load config, then fetch the selected profiles into their eml-input."""
     try:
         accounts = load_accounts(env_file)
         profiles = load_profiles(profile_file, accounts)
@@ -992,6 +997,7 @@ def _do_render(
     except ConfigError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
+    configured = profiles
     profiles = _select_profiles(profiles, only_profile)
     targets = [p for p in profiles if p.pdf] if respect_pdf else profiles
     if not targets:
@@ -1020,6 +1026,32 @@ def _do_render(
         _abort()
     if verbosity > 0:
         typer.echo(report.summary())
+        for directory, count in _unclaimed_input(configured):
+            # `render` knows the profiles; mail outside them needs file mode.
+            typer.echo(
+                f"{count} mail(s) wait in {directory} outside a profile — "
+                f'file them with: imaparc eml "{directory}"'
+            )
     # Non-conformant PDF/A is reported (see summary), never fatal: the .eml is the
     # guarantee and the PDF a best-effort rendition — the run always succeeds.
     return 0
+
+
+def _unclaimed_input(profiles: list[Profile]) -> list[tuple[Path, int]]:
+    """Directories of an eml-input holding mail that belongs to no profile.
+
+    The root of each ``eml-input`` (loose mail dropped there) and every
+    subdirectory that is not a configured profile's — ``00_Mails``, say.
+    """
+    claimed = {input_eml_dir(p.output) for p in profiles}
+    found: list[tuple[Path, int]] = []
+    for root in sorted({p.output.parent / EML_INPUT for p in profiles}):
+        if not root.is_dir():
+            continue
+        for directory in [root, *sorted(d for d in root.iterdir() if d.is_dir())]:
+            if directory in claimed:
+                continue
+            count = sum(1 for f in directory.glob("*.eml") if f.is_file())
+            if count:
+                found.append((directory, count))
+    return found

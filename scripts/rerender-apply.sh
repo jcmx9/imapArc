@@ -19,9 +19,9 @@ set -euo pipefail
 # A folder written by `imaparc eml` holds its own .eml: that file is first moved
 # out beside the folder, so it survives and can be rendered again.
 #
-# Afterwards run collect.sh, written next to LIST: it gathers every other .eml
-# in ~/imapArc/emlinput. Look through it, then run render.sh, which renders all
-# mail and files each .eml into the eml-Archiv once its PDF exists.
+# Afterwards run collect.sh, written next to LIST: it returns the mail of the
+# PDFs set aside to its eml-input and gathers loose .eml there. Look through
+# ~/imapArc/eml-input, then run render.sh to render everything that waits.
 
 usage() {
     grep '^#' "$0" | sed -n '3,22p' | cut -c3-
@@ -168,8 +168,8 @@ main() {
     uv run --quiet --project "${repo}" python "${repo}/scripts/rerender_check.py" \
         commands "${out_dir}" >/dev/null
     [[ "${skipped}" -eq 0 ]] || echo "Some lines were skipped, see above." >&2
-    echo "Next: bash ${out_dir}/collect.sh   (gathers every other .eml in ~/imapArc/emlinput)"
-    echo "Then: bash ${out_dir}/render.sh    (after looking through emlinput)"
+    echo "Next: bash ${out_dir}/collect.sh   (returns the mail to render to ~/imapArc/eml-input)"
+    echo "Then: bash ${out_dir}/render.sh    (after looking through eml-input)"
     [[ "${skipped}" -eq 0 ]] || exit 1
 }
 

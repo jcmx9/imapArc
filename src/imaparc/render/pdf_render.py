@@ -31,7 +31,7 @@ import pikepdf
 from playwright.async_api import BrowserContext
 from playwright.async_api import Error as PlaywrightError
 
-from imaparc.exceptions import RenderError
+from imaparc.exceptions import RemoteResourceError, RenderError
 from imaparc.render.geometry import (
     A4_HEIGHT_MM,
     A4_WIDTH_MM,
@@ -147,6 +147,16 @@ def _open_tag_end(html: str, name: str) -> int:
         return close + 1 if close != -1 else -1
 
 
+def _note_failure(failures: dict[str, str], url: str, reason: str | None) -> None:
+    """Record a remote resource that did not load (first reason wins).
+
+    Only http(s) resources count: what the lockdown blocks on purpose — other
+    schemes — is policy, not a failure.
+    """
+    if reason and url.lower().startswith(("http://", "https://")):
+        failures.setdefault(url, reason)
+
+
 async def render_html_to_pdf(
     context: BrowserContext,
     html: str,
@@ -167,11 +177,33 @@ async def render_html_to_pdf(
         The PDF bytes.
 
     Raises:
+        RemoteResourceError: If remote content is allowed and a resource the
+            document refers to did not load.
         RenderError: If Chromium could not produce a PDF.
     """
     margin = f"{rendition.margin_mm}mm"
     left = f"{rendition.left_mm}mm"
     page = await context.new_page()
+    # With remote content allowed, every image the mail refers to is part of
+    # the rendition. One that does not arrive — connection refused, timed out,
+    # "404 Not Found" — would leave a hole nobody sees, so it is recorded here
+    # and the render fails instead of producing an incomplete PDF.
+    failures: dict[str, str] = {}
+    if allow_remote:
+        page.on(
+            "requestfailed",
+            lambda request: _note_failure(
+                failures, request.url, request.failure or "request failed"
+            ),
+        )
+        page.on(
+            "response",
+            lambda response: _note_failure(
+                failures,
+                response.url,
+                f"HTTP {response.status}" if response.status >= 400 else None,
+            ),
+        )
     try:
         await page.set_content(
             harden_document(html, allow_remote=allow_remote), wait_until="load"
@@ -180,21 +212,29 @@ async def render_html_to_pdf(
         # content that the reader saw on screen.
         await page.emulate_media(media="screen")
         if rendition.fit_page:
-            return await _render_fit_page(page, rendition.margin_mm, rendition.left_mm)
-        scale = await _fit_width(page, rendition)
-        return await page.pdf(
-            format="A4",
-            print_background=True,
-            scale=scale,
-            prefer_css_page_size=False,
-            margin={
-                "top": margin,
-                "bottom": margin,
-                "left": left,
-                "right": margin,
-            },
-        )
+            pdf = await _render_fit_page(page, rendition.margin_mm, rendition.left_mm)
+        else:
+            scale = await _fit_width(page, rendition)
+            pdf = await page.pdf(
+                format="A4",
+                print_background=True,
+                scale=scale,
+                prefer_css_page_size=False,
+                margin={
+                    "top": margin,
+                    "bottom": margin,
+                    "left": left,
+                    "right": margin,
+                },
+            )
+        if failures:
+            raise RemoteResourceError(sorted(failures.items()))
+        return pdf
     except PlaywrightError as exc:
+        if failures:
+            # A timeout while waiting for the page is the same story told
+            # differently: name the resources that never arrived.
+            raise RemoteResourceError(sorted(failures.items())) from exc
         raise RenderError(
             f"Chromium failed to render the {rendition.name} rendition: {exc}"
         ) from exc

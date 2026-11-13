@@ -28,7 +28,13 @@ from imaparc.pipeline import (
     TEMP_PREFIX,
     archive_entries,
 )
-from imaparc.profiles import Profile, archived_eml_dir, eml_dirs
+from imaparc.profiles import (
+    Profile,
+    archived_eml_dir,
+    eml_dirs,
+    error_eml_dir,
+    input_eml_dir,
+)
 
 _HASH_PREFIX = "sha256:"
 _MESSAGE_ID = re.compile(rb"^Message-ID:\s*(.+?)\s*$", re.I | re.M)
@@ -213,7 +219,7 @@ def _deep_findings(
     - ``embedded-mismatch`` (damage): the ``.eml`` inside a PDF is not the mail
       the PDF says it shows.
     - ``no-embedded-eml``: a PDF records its mail but does not carry it.
-    - ``no-eml``: a PDF's mail is not in the eml-Archiv any more — it survives
+    - ``no-eml``: a PDF's mail is in none of the eml directories any more — it survives
       inside the PDF, and ``imaparc extract`` gets it back out.
     - ``duplicate-eml``: byte-identical ``.eml`` files (mail delivered twice
       before identical copies were merged).
@@ -247,7 +253,7 @@ def _deep_findings(
                     "no-eml",
                     Severity.WARN,
                     profile,
-                    f"{path.name}: its .eml is not in the eml-Archiv "
+                    f"{path.name}: its .eml is not in the eml-archive "
                     "(still embedded in the PDF — imaparc extract)",
                 )
             )
@@ -279,16 +285,36 @@ def _deep_findings(
     return findings
 
 
+def _waiting(directory: Path, kind: str, text: str, profile: str) -> list[Finding]:
+    """One finding for the ``.eml`` files sitting in ``directory``, if any."""
+    if not directory.is_dir():
+        return []
+    names = sorted(p.stem for p in directory.glob("*.eml"))
+    if not names:
+        return []
+    shown = ", ".join(names[:5]) + (" …" if len(names) > 5 else "")
+    return [
+        Finding(kind, Severity.WARN, profile, f"{len(names)} mail(s) {text}: {shown}")
+    ]
+
+
 def verify_profile(profile: Profile, *, deep: bool = False) -> list[Finding]:
     """Check one profile's archive and return everything that does not line up.
 
-    A ``pdf: false`` profile is only checked for its ``.eml`` files: it is not
-    supposed to have PDFs, so their absence is not a defect. Both ``.eml``
-    locations are read — the ``eml-Archiv`` and the legacy ``eml/`` inbox.
+    The directory a mail lies in says where it stands, so each is read for what
+    it means: ``eml-input`` holds mail still to render (``pending``),
+    ``eml-error`` mail that could not be rendered correctly (``failed``), and
+    everything in ``eml-archive`` — or the directories of earlier versions —
+    must have its PDF (``unrendered`` if not).
+
+    A ``pdf: false`` profile is only checked for having mail at all: it is not
+    supposed to have PDFs, so their absence is not a defect.
 
     ``deep`` adds the checks that open every PDF and compare every ``.eml``
     (see :func:`_deep_findings`).
     """
+    output = profile.output
+    waiting, failed = input_eml_dir(output), error_eml_dir(output)
     present = [d for d in eml_dirs(profile) if d.is_dir()]
     if not present:
         return [
@@ -296,17 +322,25 @@ def verify_profile(profile: Profile, *, deep: bool = False) -> list[Finding]:
                 "no-archive",
                 Severity.WARN,
                 profile.name,
-                f"no mail at {archived_eml_dir(profile.output)} — nothing fetched yet?",
+                f"no mail at {archived_eml_dir(output)} — nothing fetched yet?",
             )
         ]
     if not profile.pdf:
         return []
-    entries = archive_entries(profile.output)
+    entries = archive_entries(output)
     rendered = _Rendered.of(entries)
+    archived = [d for d in present if d not in (waiting, failed)]
     return [
         *_duplicates(entries, profile.name),
-        *_entry_findings(profile.output, entries, profile.name),
-        *(f for d in present for f in _unrendered(d, rendered, profile.name)),
+        *_entry_findings(output, entries, profile.name),
+        *(f for d in archived for f in _unrendered(d, rendered, profile.name)),
+        *_waiting(waiting, "pending", "wait in eml-input for a render", profile.name),
+        *_waiting(
+            failed,
+            "failed",
+            "could not be rendered (see the .error.txt beside each)",
+            profile.name,
+        ),
         *(_deep_findings(entries, present, profile.name) if deep else []),
     ]
 

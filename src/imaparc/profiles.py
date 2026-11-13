@@ -314,23 +314,66 @@ def attachments_match(required: list[str], attachment_names: list[str]) -> bool:
     )
 
 
-EML_ARCHIVE = "eml-Archiv"
+# The three places a mail's ``.eml`` can be, each with one subdirectory per
+# profile, beside the profile directories (``<archive root>/<name>/``):
+#
+#   eml-input/<profile>/    waiting: fetched or dropped, no PDF yet
+#   eml-archive/<profile>/  done: its PDF was rendered correctly and stored
+#   eml-error/<profile>/    failed: could not be rendered correctly; the reason
+#                           lies beside it as <name>.error.txt
+#
+# So the directory *is* the state. Rendering only ever reads eml-input (or a
+# path it is given) and never the archive.
+EML_INPUT = "eml-input"
+EML_ARCHIVE = "eml-archive"
+EML_ERROR = "eml-error"
+# Names of earlier versions, still read so an existing archive keeps working:
+# 26.11.4 to 26.11.14 kept every mail in eml-Archiv/, before that in <output>/eml/.
+LEGACY_EML_ARCHIVE = "eml-Archiv"
+ERROR_NOTE_SUFFIX = ".error.txt"
+
+
+def input_eml_dir(output: Path) -> Path:
+    """Where a profile's mail waits to be rendered — ``fetch`` delivers here."""
+    return output.parent / EML_INPUT / output.name
 
 
 def archived_eml_dir(output: Path) -> Path:
-    """Where a profile's ``.eml`` files live.
-
-    ``<archive root>/eml-Archiv/<output name>/`` — beside the profile
-    directories, not inside one, so a profile directory holds nothing but PDFs.
-    ``fetch`` delivers here and ``render`` reads from here.
-    """
+    """Where a profile's mail lives once its PDF is rendered and stored."""
     return output.parent / EML_ARCHIVE / output.name
 
 
-def eml_dirs(profile: Profile) -> tuple[Path, Path]:
-    """Where a profile's ``.eml`` may be: the ``eml/`` inbox of versions before
-    26.11.6 (still read, emptied by the next render) and the eml-Archiv."""
-    return profile.output / "eml", archived_eml_dir(profile.output)
+def error_eml_dir(output: Path) -> Path:
+    """Where a profile's mail goes when it cannot be rendered correctly."""
+    return output.parent / EML_ERROR / output.name
+
+
+def pending_eml_dirs(output: Path) -> tuple[Path, ...]:
+    """The directories ``render`` reads for a profile: its input, and the
+    ``<output>/eml/`` inbox of versions before 26.11.6."""
+    return input_eml_dir(output), output / "eml"
+
+
+def all_eml_dirs(output: Path) -> tuple[Path, ...]:
+    """Every place the mail of the profile at ``output`` may be, current and
+    legacy: input, archive, error, the ``eml-Archiv`` of 26.11.4 to 26.11.14 and
+    the ``<output>/eml/`` of earlier versions."""
+    return (
+        input_eml_dir(output),
+        archived_eml_dir(output),
+        error_eml_dir(output),
+        output.parent / LEGACY_EML_ARCHIVE / output.name,
+        output / "eml",
+    )
+
+
+def eml_dirs(profile: Profile) -> tuple[Path, ...]:
+    """Every place a profile's ``.eml`` may be (see :func:`all_eml_dirs`).
+
+    For whatever must know whether a mail's original still exists locally —
+    fetch's server-action guard, ``verify``, the rerender scripts.
+    """
+    return all_eml_dirs(profile.output)
 
 
 def matching_profiles(

@@ -228,11 +228,11 @@ def test_eml_folder_is_proven_by_the_eml_inside(loose: dict[str, Path]) -> None:
 
 @pytest.fixture
 def flat(tmp_path: Path) -> dict[str, Path]:
-    """A flat profile: <root>/F/<mail>.pdf, the .eml in <root>/eml-Archiv/F/."""
+    """A flat profile: <root>/F/<mail>.pdf, the .eml in <root>/eml-archive/F/."""
     from imaparc.pdf import provenance
 
     root = tmp_path / "flatroot"
-    profile, archive = root / "F", root / "eml-Archiv" / "F"
+    profile, archive = root / "F", root / "eml-archive" / "F"
     profile.mkdir(parents=True)
     archive.mkdir(parents=True)
     raw = build_mail(subject="Flat", message_id="<f@x>", date=_DATE)
@@ -257,7 +257,7 @@ def test_discover_finds_a_flat_archive(flat: dict[str, Path], tmp_path: Path) ->
     found, loose_emls = check.discover(tmp_path, [], tmp_path / "none.yaml")
 
     assert [(a.kind, a.path) for a in found] == [("flat", flat["root"] / "F")]
-    assert loose_emls == []  # the eml-Archiv is never loose
+    assert loose_emls == []  # the eml-archive is never loose
 
 
 def test_apply_sets_flat_pdfs_aside(flat: dict[str, Path], tmp_path: Path) -> None:
@@ -277,22 +277,77 @@ def test_apply_sets_flat_pdfs_aside(flat: dict[str, Path], tmp_path: Path) -> No
     assert (out / "applied.tsv").read_text() == f"flat\t{flat['proven']}\n"
 
 
-def test_an_archive_without_any_pdf_is_still_rendered(tmp_path: Path) -> None:
-    """Mail archived but never rendered (or all PDFs set aside) must not be
-    forgotten: render.sh has to file it through `imaparc eml`."""
-    filed = tmp_path / "arc" / "eml-Archiv" / "00_Mails"
+def test_archived_mail_without_a_pdf_returns_to_the_input(tmp_path: Path) -> None:
+    """The archive is never rendered, so mail there whose PDF is gone (or was
+    never written) has to go back to eml-input — or it would be forgotten."""
+    root = tmp_path / "arc"
+    filed = root / "eml-archive" / "00_Mails"
     filed.mkdir(parents=True)
     (filed / "m.eml").write_bytes(build_mail(subject="Unrendered"))
     out = tmp_path / "out"
 
     assert _list(tmp_path, out) == []  # nothing to set aside
     found, loose_emls = check.discover(tmp_path, [out], tmp_path / "none.yaml")
-    profile = tmp_path / "arc" / "00_Mails"
-    assert [(a.kind, a.path) for a in found] == [("flat", profile)]
+    assert [(a.kind, a.path) for a in found] == [("flat", root / "00_Mails")]
     assert loose_emls == []
 
-    assert check._commands(out, tmp_path / "arc" / "emlinput") == 0
-    assert f"then imaparc eml {filed}; fi" in (out / "render.sh").read_text()
+    assert check._collect(out, root / "eml-input") == 0
+
+    assert list(filed.iterdir()) == []
+    assert (root / "eml-input" / "00_Mails" / "m.eml").is_file()
+    assert check._collect(out, root / "eml-input") == 0  # again: nothing to do
+
+
+def test_settle_puts_each_mail_where_its_pdf_says(flat: dict[str, Path]) -> None:
+    from imaparc.pdf import provenance
+
+    root, profile = flat["root"], flat["root"] / "F"
+    archive = root / "eml-archive" / "F"
+    rendered = (archive / "drifted-name.eml").read_bytes()
+    (archive / "no-pdf.eml").write_bytes(build_mail(subject="No PDF yet"))
+    legacy = root / "eml-Archiv" / "F"  # the name used from 26.11.4 to 26.11.14
+    legacy.mkdir(parents=True)
+    old = build_mail(subject="Old", message_id="<old@x>")
+    (legacy / "old.eml").write_bytes(old)
+    (profile / "old.pdf").write_bytes(
+        provenance.stamp(_pdf([]), old, message_id="<old@x>")
+    )
+    failed = root / "eml-error" / "F"
+    failed.mkdir(parents=True)
+    (failed / "broken.eml").write_bytes(b"x")
+    log: list[str] = []
+
+    returned, archived = check._settle(profile, log)
+
+    assert (returned, archived) == (1, 1)
+    assert (archive / "drifted-name.eml").read_bytes() == rendered  # has its PDF
+    assert (root / "eml-input" / "F" / "no-pdf.eml").is_file()
+    assert (archive / "old.eml").read_bytes() == old  # moved over from eml-Archiv
+    assert list(legacy.iterdir()) == []
+    assert (failed / "broken.eml").is_file()  # eml-error is left alone
+    assert len(log) == 2
+
+
+def test_a_set_aside_pdf_sends_its_mail_back_to_the_input(
+    flat: dict[str, Path], tmp_path: Path
+) -> None:
+    """The whole re-render path: list, apply, collect — then render finds it."""
+    out = tmp_path / "out"
+    _list(tmp_path, out)
+    target = flat["root"] / "pdf-Löscharchiv"
+    assert (
+        _run(
+            _APPLY, out / "rerender.txt", "--move-to", target, "--yes", home=tmp_path
+        ).returncode
+        == 0
+    )
+
+    result = _run(out / "collect.sh", home=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    waiting = flat["root"] / "eml-input" / "F"
+    assert [p.name for p in waiting.iterdir()] == ["drifted-name.eml"]
+    assert list((flat["root"] / "eml-archive" / "F").iterdir()) == []
 
 
 # --- discovery -------------------------------------------------------------
@@ -320,7 +375,7 @@ def test_discover_lists_loose_eml_but_not_inboxes_folders_or_archives(
     stray = tmp_path / "Downloads" / "export"
     stray.mkdir(parents=True)
     (stray / "a.eml").write_bytes(b"x")
-    filed = tmp_path / "archive" / "eml-Archiv" / "P"
+    filed = tmp_path / "archive" / "eml-archive" / "P"
     filed.mkdir(parents=True)
     (filed / "done.eml").write_bytes(b"x")
     set_aside = tmp_path / "archive" / "pdf-Löscharchiv" / "x"
@@ -337,7 +392,7 @@ def test_discover_lists_loose_eml_but_not_inboxes_folders_or_archives(
     found, loose_emls = check.discover(tmp_path, [], config)
 
     # P's inbox belongs to `imaparc render`; the mail folders' own .eml, the
-    # eml-Archiv and the pdf-Löscharchiv are never loose.
+    # eml-archive and the pdf-Löscharchiv are never loose.
     assert loose_emls == [stray / "a.eml"]
     assert all("pdf-Löscharchiv" not in str(a.path) for a in found)
 
@@ -350,8 +405,8 @@ def test_unconfigured_inbox_is_loose(archive: dict[str, Path], tmp_path: Path) -
 def test_a_folder_is_proven_by_the_eml_archive(
     archive: dict[str, Path], tmp_path: Path
 ) -> None:
-    """Once rendered, the .eml lives in eml-Archiv/<profile>/ — still proof."""
-    filed = archive["root"] / "eml-Archiv" / "P"
+    """Once rendered, the .eml lives in eml-archive/<profile>/ — still proof."""
+    filed = archive["root"] / "eml-archive" / "P"
     filed.mkdir(parents=True)
     (archive["eml"] / "H-2.eml").rename(filed / "H-2.eml")
 
@@ -452,25 +507,42 @@ def test_apply_writes_collect_and_render_scripts(
 
     assert result.returncode == 0, result.stderr
     assert "collect.sh" in result.stdout
-    inbox = home / "imapArc" / "emlinput"
+    inbox = home / "imapArc" / "eml-input"
     assert f" collect {out} {inbox}" in (out / "collect.sh").read_text()
     render = (out / "render.sh").read_text()
     assert "\nimaparc render\n" in render
-    assert f"imaparc eml {inbox}" in render
+    # The eml-input root and each of its subdirectories go through file mode.
+    assert f"    {inbox} {inbox}/*/ \\" in render
+    assert 'imaparc eml "${dir}"' in render
 
 
-def test_render_script_files_unconfigured_archives(
-    archive: dict[str, Path], home: Path
+def test_render_script_covers_archives_without_a_profile(
+    flat: dict[str, Path], tmp_path: Path
 ) -> None:
-    """Mail of an archive without a profile is rendered by file mode."""
-    filed = archive["root"] / "eml-Archiv" / "P"
-    filed.mkdir(parents=True)
-    out = home / "out"
-    _list(home, out)  # --config none.yaml: P is unconfigured
+    """`imaparc render` only knows profile.yaml; everything else that waits in
+    an eml-input goes through `imaparc eml`, directory by directory."""
+    out = tmp_path / "out"
+    _list(tmp_path, out)  # --config none.yaml: F has no profile
+    _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=tmp_path)
+    _run(out / "collect.sh", home=tmp_path)
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "imaparc").write_text('#!/usr/bin/env bash\necho "$@" >> "$0.log"\n')
+    (stub / "imaparc").chmod(0o755)
 
-    _run(_APPLY, out / "rerender.txt", "--delete", "--yes", home=home)
+    result = subprocess.run(
+        ["bash", str(out / "render.sh")],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"},
+    )
 
-    assert f"then imaparc eml {filed}; fi" in (out / "render.sh").read_text()
+    assert result.returncode == 0, result.stderr
+    calls = (stub / "imaparc.log").read_text().splitlines()
+    assert calls[0] == "render"
+    assert f"eml {flat['root'] / 'eml-input'}" in calls
+    assert f"eml {flat['root'] / 'eml-input' / 'F'}/" in calls
 
 
 def test_collect_gathers_every_pending_eml_and_can_run_twice(
@@ -487,15 +559,15 @@ def test_collect_gathers_every_pending_eml_and_can_run_twice(
         result = _run(out / "collect.sh", home=home)
         assert result.returncode == 0, result.stderr
 
-    inbox = home / "imapArc" / "emlinput"
+    inbox = home / "imapArc" / "eml-input"
     collected = sorted(inbox.glob("*.eml"))
     assert {p.read_bytes() for p in collected} == expected
     assert not extracted.exists()
     assert not any(p.exists() for p in inbox_emls)
-    # One log line per moved file: where it came from, what it is called now.
-    log = (inbox / "emlinput.log").read_text().splitlines()
+    # One log line per moved file: where it came from, where it is now.
+    log = (inbox / "collect.log").read_text().splitlines()
     assert len(log) == len(expected)
-    assert f"{extracted}\t{extracted.name}" in log
+    assert f"{extracted}\t{inbox / extracted.name}" in log
 
 
 def test_a_legacy_folder_named_like_a_pdf_can_be_applied(
