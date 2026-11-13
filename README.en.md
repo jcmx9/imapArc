@@ -199,7 +199,7 @@ imaparc restore ~/imapArc/eml-Archiv/Hetzner --folder Archiv --dry-run
 ## Good to know
 
 - **Never overwrite.** A name collision becomes `…-2`; byte-identical mails are merged instead of copied. Files are read-only (`0400`), directories private (`0700`).
-- **Times are local time** of the machine, with the daylight-saving rule valid on the mail's date — in the file name and in the header block, which states the offset as well (`19.10.26, 11:32 (UTC+2)`).
+- **Times are local time** of the machine, with the daylight-saving rule valid on the mail's date — in the file name and in the header block, which states the offset as well (`19.10.2026, 11:32 (UTC+2)`).
 - **One run at a time.** A second one (`render`, `all`, `eml` — a right-click during a scheduled run, say) waits.
 - **Names are no identity.** An `.eml` and its PDF usually share a name, but need not (collisions, renamed profiles). What counts is the fingerprint in the PDF.
 - **PDF/A-3b** is checked with veraPDF and reported in the run. A PDF that is not conformant because of an exotic attachment is kept all the same.
