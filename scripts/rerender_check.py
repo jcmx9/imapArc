@@ -313,6 +313,7 @@ def discover(
     loose: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         here = Path(dirpath)
+        archive_names = {unicodedata.normalize("NFC", d) for d in dirnames}
         dirnames[:] = [
             d
             for d in dirnames
@@ -320,6 +321,12 @@ def discover(
             and unicodedata.normalize("NFC", d) not in _SKIP_NAMES
             and os.path.join(dirpath, d) not in skip
         ]
+        if EML_ARCHIVE in archive_names:
+            # Every profile with archived mail counts, PDFs or not: one whose
+            # PDFs are all gone (or were never rendered) must still be rendered.
+            for entry in sorted((here / EML_ARCHIVE).iterdir()):
+                if entry.is_dir() and not entry.name.startswith("."):
+                    flat_dirs.add(here / entry.name)
         if MANIFEST not in filenames:
             if dirpath not in inboxes and str(here.resolve()) not in inboxes:
                 loose.extend(here / f for f in sorted(filenames) if f.endswith(".eml"))

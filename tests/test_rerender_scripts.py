@@ -277,6 +277,24 @@ def test_apply_sets_flat_pdfs_aside(flat: dict[str, Path], tmp_path: Path) -> No
     assert (out / "applied.tsv").read_text() == f"flat\t{flat['proven']}\n"
 
 
+def test_an_archive_without_any_pdf_is_still_rendered(tmp_path: Path) -> None:
+    """Mail archived but never rendered (or all PDFs set aside) must not be
+    forgotten: render.sh has to file it through `imaparc eml`."""
+    filed = tmp_path / "arc" / "eml-Archiv" / "00_Mails"
+    filed.mkdir(parents=True)
+    (filed / "m.eml").write_bytes(build_mail(subject="Unrendered"))
+    out = tmp_path / "out"
+
+    assert _list(tmp_path, out) == []  # nothing to set aside
+    found, loose_emls = check.discover(tmp_path, [out], tmp_path / "none.yaml")
+    profile = tmp_path / "arc" / "00_Mails"
+    assert [(a.kind, a.path) for a in found] == [("flat", profile)]
+    assert loose_emls == []
+
+    assert check._commands(out, tmp_path / "arc" / "emlinput") == 0
+    assert f"then imaparc eml {filed}; fi" in (out / "render.sh").read_text()
+
+
 # --- discovery -------------------------------------------------------------
 
 
