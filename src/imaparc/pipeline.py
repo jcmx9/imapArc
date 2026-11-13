@@ -31,7 +31,7 @@ from pathlib import Path
 
 from playwright.async_api import BrowserContext
 
-from imaparc.attachments.classify import effective_mime
+from imaparc.attachments.classify import AttachmentKind, classify, effective_mime
 from imaparc.attachments.models import ConversionOutcome
 from imaparc.attachments.to_pdf import convert_attachment
 from imaparc.config import RunConfig
@@ -50,7 +50,7 @@ from imaparc.humanize import format_date_human, format_file_size
 from imaparc.mail.models import AttachmentPart, ParsedMail
 from imaparc.mail.parser import parse_mail
 from imaparc.naming import build_base_name
-from imaparc.pdf import provenance
+from imaparc.pdf import ocr, provenance
 from imaparc.pdf.merge import count_pages, merge_pdfs
 from imaparc.pdf.pdfa import to_pdfa3b
 from imaparc.render.browser import BrowserPool
@@ -97,6 +97,9 @@ class RenderResult:
     complete: bool = True  # every attachment became pages
     combined_pdf: Path | None = None
     attachments: tuple[AttachmentResult, ...] = field(default_factory=tuple)
+    # Attachments whose pages could not be made searchable (OCR failed). The
+    # pages are in the PDF all the same — unsearchable, as they were sent.
+    ocr_failed: tuple[str, ...] = ()
 
 
 async def render_mail(
@@ -152,8 +155,9 @@ async def render_mail(
         work = Path(td)
         async with pool.context() as ctx:
             mail_part = await _render_mail_part(ctx, parsed, config)
+            ocr_failed: list[str] = []
             attachment_parts, results, kept = await _render_attachments(
-                ctx, parsed, work, config, eml_name
+                ctx, parsed, work, config, eml_name, ocr_failed=ocr_failed
             )
         parts = mail_part + attachment_parts
 
@@ -184,6 +188,7 @@ async def render_mail(
         complete=all(r.outcome.ok for r in results),
         combined_pdf=target,
         attachments=tuple(results),
+        ocr_failed=tuple(ocr_failed),
     )
 
 
@@ -589,6 +594,7 @@ async def _render_attachments(
     config: RunConfig,
     eml_name: str,
     *,
+    ocr_failed: list[str],
     prefix: str = "",
     depth: int = 1,
 ) -> tuple[list[_Part], list[AttachmentResult], list[tuple[str, str, bytes]]]:
@@ -638,6 +644,7 @@ async def _render_attachments(
                 work,
                 config,
                 eml_name,
+                ocr_failed=ocr_failed,
                 prefix=f"{label}.",
                 depth=depth + 1,
             )
@@ -658,7 +665,10 @@ async def _render_attachments(
         if outcome.ok and outcome.pdf_bytes is not None:
             separator = render_separator(label, att.filename, outcome.page_count, size)
             parts.append(_Part(await _render_page(ctx, separator, config), mark))
-            parts.append(_Part(outcome.pdf_bytes))
+            searchable = await _searchable(
+                outcome.pdf_bytes, att, work, config, f"ocr-{label}", ocr_failed
+            )
+            parts.append(_Part(searchable))
         else:
             embedded = att.size <= config.max_attachment_bytes
             if embedded:
@@ -676,6 +686,61 @@ async def _render_attachments(
             )
             parts.append(_Part(await _render_page(ctx, info, config), mark))
     return parts, results, kept
+
+
+# Logged once per process, not once per attachment.
+_ocr_unavailable_logged = False
+
+
+async def _searchable(
+    pdf_bytes: bytes,
+    att: AttachmentPart,
+    work: Path,
+    config: RunConfig,
+    name: str,
+    ocr_failed: list[str],
+) -> bytes:
+    """The attachment's pages, its scans given a text layer where possible.
+
+    PDFs and images only — a typeset text attachment is text already — and of
+    those only the pages that are scans without a text layer of their own (see
+    ``pdf/ocr.py``). Without
+    the OCR tools the pages are returned as they are (said once per run); if
+    recognition fails for this file it is named in ``ocr_failed`` and the pages
+    are used unchanged. Never a reason not to render the mail: its content is
+    complete, only its searchability is not.
+    """
+    global _ocr_unavailable_logged
+    recognisable = classify(att) in (AttachmentKind.PDF, AttachmentKind.IMAGE)
+    if not config.ocr or not recognisable:
+        return pdf_bytes
+    languages = ocr.usable_languages(config.ocr_languages, config.tools.tesseract)
+    if config.tools.ocrmypdf is None or not languages:
+        if not _ocr_unavailable_logged:
+            _ocr_unavailable_logged = True
+            logger.warning(
+                "ocrmypdf/Tesseract (languages %s) not available — scanned "
+                "attachments stay unsearchable; see `imaparc doctor`",
+                config.ocr_languages,
+            )
+        return pdf_bytes
+    pages = ocr.pages_wanting_ocr(pdf_bytes)
+    if not pages:
+        return pdf_bytes  # digital, or recognised already: nothing to add
+    try:
+        return await asyncio.to_thread(
+            ocr.add_text_layer,
+            pdf_bytes,
+            work,
+            ocrmypdf=config.tools.ocrmypdf,
+            languages=languages,
+            pages=pages,
+            name=name,
+        )
+    except ocr.OcrError as exc:
+        logger.warning("No text layer for %r: %s", att.filename, exc)
+        ocr_failed.append(att.filename)
+        return pdf_bytes
 
 
 def _merge_to_pdfa(pages: list[bytes], stem: Path, config: RunConfig) -> bytes:

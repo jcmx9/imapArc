@@ -12,6 +12,8 @@ from imaparc.exceptions import ToolNotFoundError
 
 # Names of the external tools resolved on PATH unless explicitly overridden.
 REQUIRED_TOOLS: tuple[str, ...] = ("gs", "qpdf", "verapdf")
+# Used when present: OCR for attachment pages without a text layer.
+OPTIONAL_TOOLS: tuple[str, ...] = ("ocrmypdf", "tesseract")
 
 # Candidate sRGB ICC profiles, tried in this order. One of them is embedded as
 # the PDF/A output intent; any sRGB profile serves, and systems ship theirs in
@@ -46,6 +48,9 @@ class ToolPaths(BaseModel):
     gs: Path
     qpdf: Path
     verapdf: Path
+    # Optional: without them scanned attachments simply get no text layer.
+    ocrmypdf: Path | None = None
+    tesseract: Path | None = None
 
     @classmethod
     def resolve(cls, overrides: dict[str, str] | None = None) -> ToolPaths:
@@ -70,6 +75,10 @@ class ToolPaths(BaseModel):
                 + ", ".join(missing)
                 + ". Install them or pass an explicit path."
             )
+        for tool in OPTIONAL_TOOLS:
+            resolved = overrides.get(tool) or shutil.which(tool)
+            if resolved is not None:
+                found[tool] = Path(resolved)
         return cls(**found)
 
 
@@ -89,6 +98,9 @@ class RunConfig(BaseModel):
     max_attachment_bytes: int = Field(default=400 * 1024 * 1024, ge=0)
     attachment_timeout_s: float = Field(default=120.0, gt=0)
     render_timeout_ms: int = Field(default=30_000, gt=0)
+    # Text recognition for attachment pages without text (scans, photos).
+    ocr: bool = True
+    ocr_languages: str = "deu+eng"
     # Filename / subfolder templates.
     filename_pattern: str = naming.DEFAULT_PATTERN
     date_format: str = naming.DEFAULT_DATE_FORMAT

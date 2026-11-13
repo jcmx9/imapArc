@@ -53,9 +53,11 @@ jobs:
         # poppler-utils provides pdftotext, which the render tests use to read
         # the text layer back out of a produced PDF. icc-profiles-free provides
         # /usr/share/color/icc/sRGB.icc, embedded as the PDF/A output intent.
+        # ocrmypdf + Tesseract (with German) drive the OCR tests.
         run: |
           sudo apt-get update
-          sudo apt-get install -y ghostscript qpdf poppler-utils icc-profiles-free
+          sudo apt-get install -y ghostscript qpdf poppler-utils icc-profiles-free \
+            ocrmypdf tesseract-ocr tesseract-ocr-deu
           ls -l /usr/share/color/icc/ || true
 
       - name: Install veraPDF

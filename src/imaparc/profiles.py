@@ -167,6 +167,9 @@ class Profile(BaseModel):
     remote_images: bool = False  # load remote images when rendering this profile
     jobs: int = Field(default=4, ge=1)  # parallel renders; CLI --jobs overrides
     gs_jobs: int = Field(default=2, ge=1)  # parallel Ghostscript runs (memory)
+    # Text recognition for attachment pages (scans, photos); see pdf/ocr.py.
+    ocr: bool = True
+    ocr_languages: str = "deu+eng"  # Tesseract languages, '+'-separated
     after_fetch: AfterFetch | None = None
 
     # Naming — used by both phases, see the class docstring.

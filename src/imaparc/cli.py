@@ -103,6 +103,13 @@ _RemoteOpt = Annotated[
         help="Force remote images on for all profiles (else per profile).",
     ),
 ]
+_NoOcrOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-ocr",
+        help="Do not recognise text in scanned attachments (else per profile).",
+    ),
+]
 _JobsOpt = Annotated[
     int | None,
     typer.Option("--jobs", "-j", min=1, help="Parallel renders; overrides profile."),
@@ -185,6 +192,7 @@ def run_all(
     only_profile: _ProfileOpt = None,
     state_db: _StateOpt = None,
     allow_remote_images: _RemoteOpt = False,
+    no_ocr: _NoOcrOpt = False,
     jobs: _JobsOpt = None,
     log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
@@ -205,6 +213,7 @@ def run_all(
         jobs,
         verbosity,
         respect_pdf=True,
+        no_ocr=no_ocr,
     )
     raise typer.Exit(code)
 
@@ -464,6 +473,7 @@ def render(
     profile_file: _ProfilesOpt = DEFAULT_PROFILES,
     only_profile: _ProfileOpt = None,
     allow_remote_images: _RemoteOpt = False,
+    no_ocr: _NoOcrOpt = False,
     jobs: _JobsOpt = None,
     log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
@@ -488,6 +498,7 @@ def render(
         jobs,
         verbosity,
         respect_pdf=False,
+        no_ocr=no_ocr,
     )
     raise typer.Exit(code)
 
@@ -513,6 +524,7 @@ def eml(
             help="Do not load remote images (no tracking pixel is fetched).",
         ),
     ] = False,
+    no_ocr: _NoOcrOpt = False,
     jobs: _JobsOpt = None,
     log_file: _LogFileOpt = None,
     silent: _SilentOpt = False,
@@ -576,6 +588,7 @@ def eml(
                     name=name,
                     tools=tools,
                     allow_remote=not no_remote_images,
+                    ocr=not no_ocr,
                     jobs=jobs if jobs is not None else 4,
                     verbosity=verbosity,
                 )
@@ -997,6 +1010,7 @@ def _do_render(
     verbosity: int,
     *,
     respect_pdf: bool,
+    no_ocr: bool = False,
 ) -> int:
     """Render the selected profiles; return the process exit code.
 
@@ -1028,7 +1042,14 @@ def _do_render(
     try:
         with run_lock(_announce_wait):
             report = asyncio.run(
-                run_render(targets, tools, allow_remote_images, jobs, verbosity)
+                run_render(
+                    targets,
+                    tools,
+                    allow_remote_images,
+                    jobs,
+                    verbosity,
+                    cli_no_ocr=no_ocr,
+                )
             )
     except (BrowserLaunchError, LockError) as exc:
         typer.echo(f"Error: {exc}", err=True)

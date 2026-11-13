@@ -35,11 +35,16 @@ def pytest_collection_modifyitems(
     skip_chromium = pytest.mark.skip(reason="Playwright Chromium not installed")
     skip_tools = pytest.mark.skip(reason=f"missing tools: {', '.join(missing)}")
 
+    ocr_ok = shutil.which("ocrmypdf") is not None and shutil.which("tesseract")
+    skip_ocr = pytest.mark.skip(reason="ocrmypdf/tesseract not installed")
+
     for item in items:
         if "requires_chromium" in item.keywords and not chromium_ok:
             item.add_marker(skip_chromium)
         if "requires_tools" in item.keywords and missing:
             item.add_marker(skip_tools)
+        if "requires_ocr" in item.keywords and not ocr_ok:
+            item.add_marker(skip_ocr)
 
 
 @pytest.fixture(autouse=True)

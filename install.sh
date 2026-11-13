@@ -6,7 +6,8 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/jcmx9/imapArc/main/install.sh | bash
 #
 # Installs, in this order, skipping whatever is already present:
-#   uv, Ghostscript, qpdf, veraPDF, imapArc itself, Chromium, and (optionally)
+#   uv, Ghostscript, qpdf, veraPDF, ocrmypdf + Tesseract, imapArc itself,
+#   Chromium, and (optionally)
 #   the Finder right-click action.
 #
 # Options (as arguments, or as environment variables):
@@ -108,6 +109,31 @@ install_linux_packages() {
     fi
 }
 
+ensure_ocr_tools() {
+    # Optional: without them imapArc works as before, scanned attachments just
+    # stay unsearchable. So a failure here is reported, never fatal.
+    if command -v ocrmypdf >/dev/null 2>&1 && command -v tesseract >/dev/null 2>&1 &&
+        tesseract --list-langs 2>/dev/null | grep -qx deu; then
+        log "ocrmypdf and Tesseract (with German) are present"
+        return
+    fi
+    log "installing ocrmypdf and Tesseract language data (text recognition for scans)"
+    if [[ "${OS}" == "Linux" ]]; then
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get install -y ocrmypdf tesseract-ocr tesseract-ocr-deu ||
+                log "could not install the OCR tools — continuing without them"
+        else
+            log "install ocrmypdf and tesseract (with German) with your package manager"
+        fi
+        return
+    fi
+    if command -v brew >/dev/null 2>&1; then
+        brew install ocrmypdf tesseract tesseract-lang ||
+            log "could not install the OCR tools — continuing without them"
+        brew link tesseract >/dev/null 2>&1 || true
+    fi
+}
+
 ensure_verapdf() {
     if command -v verapdf >/dev/null 2>&1; then
         log "veraPDF is present"
@@ -173,6 +199,7 @@ main() {
     ensure_uv
     ensure_render_tools
     ensure_verapdf
+    ensure_ocr_tools
     install_imaparc
     ensure_chromium
 

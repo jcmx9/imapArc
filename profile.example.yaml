@@ -100,6 +100,17 @@ profiles:
                                      #   Keep this below `jobs`: one conversion holds
                                      #   a whole document in memory, so this is what
                                      #   bounds peak memory use.
+    ocr: true                        # Optional, default true. Recognise the text
+                                     #   in scanned attachment pages and photos
+                                     #   (ocrmypdf + Tesseract) and lay it
+                                     #   invisibly over them, so the PDF is found
+                                     #   by what they say. Real text is kept as it
+                                     #   is; the attachment as sent stays
+                                     #   unchanged inside the embedded .eml.
+                                     #   Without the tools it is skipped.
+    ocr_languages: deu+eng           # Optional, default deu+eng. Tesseract
+                                     #   languages, '+'-separated; ones that are
+                                     #   not installed are left out.
 
     # --- naming -------------------------------------------------------------
     # Both phases read these: fetch names the .eml, render names the PDF folder,

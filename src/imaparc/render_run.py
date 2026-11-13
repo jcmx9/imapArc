@@ -60,6 +60,8 @@ async def run_render(
     cli_remote: bool,
     cli_jobs: int | None,
     verbosity: int,
+    *,
+    cli_no_ocr: bool = False,
 ) -> RunReport:
     """Render each profile's mail with its own settings, then validate.
 
@@ -93,6 +95,8 @@ async def run_render(
             jobs=jobs,
             gs_jobs=profile.gs_jobs,
             allow_remote=cli_remote or profile.remote_images,
+            ocr=profile.ocr and not cli_no_ocr,
+            ocr_languages=profile.ocr_languages,
             # Same source as fetch's naming, so the .eml and this profile's PDF
             # folders keep sharing one base name.
             filename_pattern=profile.filename_pattern,

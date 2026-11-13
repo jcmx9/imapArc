@@ -41,6 +41,7 @@ Der Name folgt dem Schema `DATUM_UHRZEIT_PROFIL_BETREFF` und ist je Profil einst
 |--------|------|
 | Die Mail mit Kopfblock (Betreff, Von, Datum, An/CC) | lesbar wie im Mailprogramm; bei aufwendigen Mails zusätzlich eine Ein-Seiten-Übersicht und immer eine Nur-Text-Fassung |
 | Die Anhänge als Seiten (PDF, Bilder, Text — auch angehängte Mails samt deren Anhängen) | alles in einer Datei, durchsuchbar |
+| **Unsichtbare Textebene** auf gescannten Anhangseiten (OCR) | auch Scans werden gefunden; das Original in der `.eml` bleibt unverändert |
 | **Lesezeichen** zur Mail, zu jeder Fassung und zu jedem Anhang | schnelle Navigation |
 | **Die Original-`.eml`, eingebettet** | die PDF trägt ihr Original in sich — `imaparc extract` holt es heraus |
 | **Anhänge, die keine Seiten werden** (Word, Excel, ZIP …), eingebettet | im PDF-Programm unter „Anhänge“ direkt zu öffnen; eine Info-Seite weist darauf hin |
@@ -52,11 +53,12 @@ Der Name folgt dem Schema `DATUM_UHRZEIT_PROFIL_BETREFF` und ist je Profil einst
 - Python ≥ 3.12 und < 3.14
 - [uv](https://docs.astral.sh/uv/)
 - Ghostscript, qpdf, veraPDF und Chromium — nur zum Rendern (z. B. `brew install ghostscript qpdf verapdf`)
+- optional ocrmypdf und Tesseract mit deutschen Sprachdaten — Texterkennung für Scans (`brew install ocrmypdf tesseract-lang`)
 - Git
 
 ## Installation
 
-**Der einfache Weg (macOS und Linux):** ein Befehl installiert alles — uv, Ghostscript, qpdf, veraPDF, imapArc, Chromium — und richtet den Rechtsklick-Eintrag ein:
+**Der einfache Weg (macOS und Linux):** ein Befehl installiert alles — uv, Ghostscript, qpdf, veraPDF, ocrmypdf mit Tesseract, imapArc, Chromium — und richtet den Rechtsklick-Eintrag ein:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jcmx9/imapArc/main/install.sh | bash
@@ -127,6 +129,8 @@ profiles:
     output: ~/imapArc/Hetzner      # Ziel der PDFs; .eml in ~/imapArc/eml-*/Hetzner
     pdf: true                      # auch PDFs rendern (Default false)
     # remote_images: false         # externe Bilder beim Rendern laden
+    # ocr: true                    # Scans in Anhängen durchsuchbar machen
+    # ocr_languages: deu+eng       # Tesseract-Sprachen für die Texterkennung
     # filename_pattern: '{date}_{profile}_{subject}'
     # date_format: YYYY-MM-DD_hh-mm-ss
     after_fetch:                   # optional; erst nach gesicherter Ablage
@@ -215,6 +219,7 @@ imaparc restore ~/imapArc/eml-archive/Hetzner --folder Archiv --dry-run
 - **Ein Lauf zur Zeit.** Startet ein zweiter (`render`, `all`, `eml` — etwa per Rechtsklick während eines geplanten Laufs), wartet er.
 - **Namen sind keine Zuordnung.** `.eml` und PDF heißen meist gleich, müssen es aber nicht (Kollisionen, umbenannte Profile). Maßgeblich ist der Fingerabdruck in der PDF.
 - **PDF/A-3b** wird mit veraPDF geprüft und im Lauf gemeldet. Eine PDF, die wegen eines exotischen Anhangs nicht konform ist, bleibt trotzdem erhalten und ihre Mail im `eml-archive` — der Inhalt ist vollständig, nur die Norm verletzt.
+- **Texterkennung (OCR)** nur, wo sie fehlt: Eine Anhangseite bekommt eine unsichtbare Textebene, wenn sie ein Bild ohne jeden Text ist oder überwiegend Bild mit kaum Text (ein Scan, dessen Erkennung offensichtlich fehlt). Seiten mit vorhandener Textebene bleiben unangetastet. Die Anhänge in der eingebetteten `.eml` bleiben Original. Scheitert die Erkennung, wird die PDF trotzdem gespeichert — der Inhalt ist vollständig, nur nicht durchsuchbar — und der Lauf meldet die Mail. Fehlen ocrmypdf oder Tesseract, entfällt die Erkennung; `imaparc doctor` weist darauf hin. Abschalten: `--no-ocr` oder `ocr: false` im Profil.
 - **Kein Nachladen** bei `render`, solange das Profil es nicht erlaubt: Externe Ressourcen und Tracking-Pixel werden vor dem Rendern entfernt.
 - **Lange Läufe:** `-v` zeigt jede Mail, `-vv` Details, `-Q` schweigt; `--log-file` schreibt in jedem Fall mit. Schlägt eine Mail fehl, steht sie mit Namen und Grund in der Zusammenfassung, und der Lauf geht weiter.
 
@@ -249,6 +254,7 @@ Die `eml-*`-Ordner und `pdf-Löscharchiv/` werden nie nach PDFs durchsucht. Alle
 | `render` | `--profile <name>` | Nur dieses Profil |
 | `render` | `--allow-remote-images` | Externe Bilder erzwingen (sonst je Profil `remote_images`) |
 | `render` | `--jobs`, `-j` | Parallele Renderings |
+| `render` / `all` / `eml` | `--no-ocr` | Keine Texterkennung für Scans (sonst je Profil `ocr`) |
 | `eml` | `[PFADE...]` | Dateien oder Verzeichnisse (Default: aktuelles Verzeichnis) |
 | `eml` | `--profiles <pfad>` | `profile.yaml`, deren Regeln das Profil bestimmen |
 | `eml` | `--root <pfad>` | Archiv-Wurzel für `00_Mails` (Default `~/imapArc`) |
