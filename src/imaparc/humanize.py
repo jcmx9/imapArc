@@ -10,7 +10,7 @@ from imaparc.naming import to_local
 def format_date_human(dt: datetime | None) -> str:
     """Return a readable date string for the mail header block.
 
-    ``23.03.26, 02:18 (UTC+1)`` — local time, with the offset it is given in, so
+    ``23.03.2026, 02:18 (UTC+1)`` — local time, with the offset it is given in, so
     the line is unambiguous on its own. A naive datetime is shown as it is,
     without an offset. Empty string for a missing date. Deliberately separate
     from the filename date format.
@@ -18,7 +18,7 @@ def format_date_human(dt: datetime | None) -> str:
     if dt is None:
         return ""
     local = to_local(dt) or dt
-    text = local.strftime("%d.%m.%y, %H:%M")
+    text = local.strftime("%d.%m.%Y, %H:%M")
     offset = local.utcoffset()
     if offset is None:
         return text

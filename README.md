@@ -199,7 +199,7 @@ imaparc restore ~/imapArc/eml-Archiv/Hetzner --folder Archiv --dry-run
 ## Gut zu wissen
 
 - **Nie überschreiben.** Eine Namenskollision wird zu `…-2`; byte-gleiche Mails werden zusammengelegt statt kopiert. Dateien sind schreibgeschützt (`0400`), Ordner privat (`0700`).
-- **Uhrzeiten sind Ortszeit** des Rechners, mit der am Tag der Mail gültigen Sommer-/Winterzeit — im Dateinamen wie im Kopfblock, der die Abweichung dazu nennt (`19.10.26, 11:32 (UTC+2)`).
+- **Uhrzeiten sind Ortszeit** des Rechners, mit der am Tag der Mail gültigen Sommer-/Winterzeit — im Dateinamen wie im Kopfblock, der die Abweichung dazu nennt (`19.10.2026, 11:32 (UTC+2)`).
 - **Ein Lauf zur Zeit.** Startet ein zweiter (`render`, `all`, `eml` — etwa per Rechtsklick während eines geplanten Laufs), wartet er.
 - **Namen sind keine Zuordnung.** `.eml` und PDF heißen meist gleich, müssen es aber nicht (Kollisionen, umbenannte Profile). Maßgeblich ist der Fingerabdruck in der PDF.
 - **PDF/A-3b** wird mit veraPDF geprüft und im Lauf gemeldet. Eine PDF, die wegen eines exotischen Anhangs nicht konform ist, bleibt trotzdem erhalten.
