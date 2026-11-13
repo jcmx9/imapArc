@@ -71,9 +71,11 @@ from imaparc.profiles import (
     EML_INPUT,
     LEGACY_EML_ARCHIVE,
     all_eml_dirs,
+    archive_root,
     archived_eml_dir,
     input_eml_dir,
     load_profiles,
+    pdf_output,
 )
 from imaparc.sources.deliver import file_away
 
@@ -338,7 +340,7 @@ def discover(
                 continue
             for entry in sorted((here / group).iterdir()):
                 if entry.is_dir() and not entry.name.startswith("."):
-                    flat_dirs.add(here / entry.name)
+                    flat_dirs.add(pdf_output(here, entry.name))
         if MANIFEST not in filenames:
             if dirpath not in inboxes and str(here.resolve()) not in inboxes:
                 loose.extend(here / f for f in sorted(filenames) if f.endswith(".eml"))
@@ -477,7 +479,7 @@ def _settle(profile_dir: Path, log: list[str]) -> tuple[int, int]:
     """
     index = ArchiveIndex.scan(profile_dir)
     archive, waiting = archived_eml_dir(profile_dir), input_eml_dir(profile_dir)
-    legacy = profile_dir.parent / LEGACY_EML_ARCHIVE / profile_dir.name
+    legacy = archive_root(profile_dir) / LEGACY_EML_ARCHIVE / profile_dir.name
     returned = archived = 0
     for directory in (archive, legacy):
         for eml in sorted(_emls_in(directory)) if directory.is_dir() else []:
@@ -575,7 +577,7 @@ def _commands(out_dir: Path, inbox: Path) -> int:
         + shlex.quote(str(inbox)),
     ]
     inputs = dict.fromkeys(
-        [inbox, *(path.parent / EML_INPUT for _, path in _archives(out_dir))]
+        [inbox, *(archive_root(path) / EML_INPUT for _, path in _archives(out_dir))]
     )
     render = [
         "#!/usr/bin/env bash",

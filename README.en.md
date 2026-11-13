@@ -20,10 +20,11 @@ Guiding principle: **imapArc preserves, it does not alter.** The original is kep
 
 ```
 ~/imapArc/
-├── Hetzner/                                   # one directory per profile: PDFs only
-│   ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.pdf
-│   └── 2026-08-01_10-30-12_Hetzner_Rechnung_August_2026.pdf
-├── 00_Mails/                                  # mail that matches no profile
+├── imaparc-pdf/                               # the finished, rendered PDFs
+│   ├── Hetzner/                               # one directory per profile
+│   │   ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.pdf
+│   │   └── 2026-08-01_10-30-12_Hetzner_Rechnung_August_2026.pdf
+│   └── 00_Mails/                              # mail that matches no profile
 ├── eml-input/Hetzner/                         # waiting: fetched, no PDF yet
 ├── eml-archive/Hetzner/                       # done: rendered correctly
 │   ├── 2026-07-01_10-30-00_Hetzner_Rechnung_Juli_2026.eml
@@ -32,6 +33,8 @@ Guiding principle: **imapArc preserves, it does not alter.** The original is kep
 ```
 
 **The directory is the state.** Every mail exists as `.eml` in exactly one place: it waits in `eml-input` until it is rendered. If that works, the PDF is stored and the `.eml` moves to `eml-archive`. If it does not work correctly, **no PDF is stored**, and the `.eml` moves to `eml-error` — with a text file beside it that says why. The archive is never rendered again.
+
+Profiles whose `output` still lies directly in `~/imapArc/<profile>` (before 26.11.18) keep working unchanged; the `eml-*` directories stay in `~/imapArc` either way.
 
 Names follow the scheme `DATE_TIME_PROFILE_SUBJECT`, configurable per profile. Times are local time.
 
@@ -126,7 +129,7 @@ profiles:
       since: 2026-01-01            # ignore mail before this day
       # until: 2026-12-31          # ignore mail after this day
       # larger: 5MB                # only larger / smaller: only smaller mail
-    output: ~/imapArc/Hetzner      # PDF target; .eml in ~/imapArc/eml-*/Hetzner
+    output: ~/imapArc/imaparc-pdf/Hetzner  # PDF target; .eml in ~/imapArc/eml-*/Hetzner
     pdf: true                      # also render PDFs (default false)
     # remote_images: false         # load remote images when rendering
     # ocr: true                    # make scans in attachments searchable
@@ -165,7 +168,7 @@ imaparc eml ~/Desktop              # every .eml there (not in subfolders)
 imaparc eml --no-remote-images ~/imapArc/eml-input  # many old mails, loading nothing
 ```
 
-The **profile is derived from the headers**: the rules in `profile.yaml` (addresses, domains, subject, date, attachment types) are applied to the mail; folder rules only apply to IMAP. A mail matching several profiles is filed into each; one matching none into `~/imapArc/00_Mails`. If it lies in `eml-input/<profile>/` or `eml-error/<profile>/`, that place decides. Once the PDF exists the `.eml` moves to the `eml-archive`; if rendering fails, to `eml-error`. The source file only disappears when the copy has been written.
+The **profile is derived from the headers**: the rules in `profile.yaml` (addresses, domains, subject, date, attachment types) are applied to the mail; folder rules only apply to IMAP. A mail matching several profiles is filed into each; one matching none into `~/imapArc/imaparc-pdf/00_Mails`. If it lies in `eml-input/<profile>/` or `eml-error/<profile>/`, that place decides. Once the PDF exists the `.eml` moves to the `eml-archive`; if rendering fails, to `eml-error`. The source file only disappears when the copy has been written.
 
 A **right-click** does the same in the file manager, on selected `.eml` files and whole folders: on macOS **Services → "Mit imapArc archivieren"**, on Linux **Open With** (Nautilus, Dolphin, Thunar). Set it up or renew it with `imaparc install-service`.
 
@@ -276,7 +279,7 @@ The `eml-*` directories and `pdf-Löscharchiv/` are never searched for PDFs. Eve
 | `restore` | `--folder <name>` | Target folder, created if missing (default `INBOX`) |
 | `restore` | `--dry-run` | Only show what would be uploaded |
 | `init` | `--force` | Overwrite existing configuration files |
-| `add-profile` | `NAME`, `--output <path>` | Append a new profile (default target `~/imapArc/<name>`) |
+| `add-profile` | `NAME`, `--output <path>` | Append a new profile (default target `~/imapArc/imaparc-pdf/<name>`) |
 | `list-profiles` | | Profiles as a table |
 | `sync-profiles` | `--yes`, `-y` | Rewrite `profile.yaml` in full format (with a backup) |
 | `reset` | `--profile <name>`, `--yes` | Clear the fetch state — the next `fetch` evaluates everything again |

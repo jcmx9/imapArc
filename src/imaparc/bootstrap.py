@@ -194,7 +194,10 @@ def render_profile_from_raw(raw: dict[str, object]) -> str:
             lines.append(_annotate(f"      # {placeholder}", comment))
 
     lines.append(
-        _annotate(f"    {_kv('output', raw.get('output', '~/imapArc/unnamed'))}", "")
+        _annotate(
+            f"    {_kv('output', raw.get('output', '~/imapArc/imaparc-pdf/unnamed'))}",
+            "",
+        )
     )
     lines.append(
         _annotate(
@@ -243,7 +246,7 @@ def profile_block(name: str, output: str | None = None) -> str:
             "name": name,
             "account": "privat",
             "match": {"folders": ["INBOX"]},
-            "output": output or f"~/imapArc/{name}",
+            "output": output or f"~/imapArc/imaparc-pdf/{name}",
             "pdf": True,
             "after_fetch": {"move_to": "imapArc"},
         }

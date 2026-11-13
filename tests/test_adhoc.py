@@ -132,7 +132,9 @@ async def test_unmatched_mail_is_filed_into_00_mails(tmp_path: Path) -> None:
 
     basename = report.written[0].basename
     assert basename.endswith("_mail_Rechnung_Juli")
-    assert sorted(p.name for p in (root / "00_Mails").iterdir()) == [f"{basename}.pdf"]
+    assert sorted(p.name for p in (root / "imaparc-pdf" / "00_Mails").iterdir()) == [
+        f"{basename}.pdf"
+    ]
     # The PDF exists, so the .eml moved on to the archive — and left the inbox.
     archived = root / "eml-archive" / "00_Mails" / f"{basename}.eml"
     assert archived.read_bytes() == build_mail(subject="Rechnung Juli")
@@ -159,7 +161,7 @@ async def test_the_profile_is_derived_from_the_headers(tmp_path: Path) -> None:
     assert (root / "Amt" / f"{basename}.pdf").is_file()
     assert (root / "eml-archive" / "Amt" / f"{basename}.eml").is_file()
     assert not (root / "Other").exists()
-    assert not (root / "00_Mails").exists()
+    assert not (root / "imaparc-pdf" / "00_Mails").exists()
     assert not mail.exists()
 
 
@@ -221,7 +223,7 @@ async def test_a_second_copy_is_archived_without_a_second_folder(
 ) -> None:
     root = tmp_path / "arc"
     first = await _run([_eml(tmp_path / "in" / "a.eml")], root)
-    pdf_dir = root / "00_Mails"
+    pdf_dir = root / "imaparc-pdf" / "00_Mails"
     before = sorted(p.name for p in pdf_dir.iterdir())
 
     again = _eml(tmp_path / "elsewhere" / "copy.eml")
@@ -306,7 +308,7 @@ async def test_a_mail_that_breaks_rendering_goes_to_eml_error(
     assert "ValueError: something only this mail triggers" in note
     assert "no PDF was written" in note
     assert len(report.written) == 1 and not good.exists()
-    assert len(list((root / "00_Mails").glob("*.pdf"))) == 1
+    assert len(list((root / "imaparc-pdf" / "00_Mails").glob("*.pdf"))) == 1
     assert "1 FAILED to render" in report.summary()
 
 
@@ -368,7 +370,9 @@ async def test_a_dead_remote_image_means_no_pdf(tmp_path: Path) -> None:
     report = await _run([mail], root, verbosity=0)
 
     assert report.written == []
-    assert not (root / "00_Mails").exists() or not list((root / "00_Mails").iterdir())
+    assert not (root / "imaparc-pdf" / "00_Mails").exists() or not list(
+        (root / "imaparc-pdf" / "00_Mails").iterdir()
+    )
     note = (root / "eml-error" / "00_Mails" / "a.error.txt").read_text()
     assert "remote resources did not load" in note
     assert f"http://127.0.0.1:{port}/gone.png" in note
@@ -510,7 +514,7 @@ async def test_two_copies_of_one_mail_produce_one_folder(tmp_path: Path) -> None
 
     report = await _run(collect_eml([inbox]), tmp_path / "arc", verbosity=0)
 
-    pdfs = list((tmp_path / "arc" / "00_Mails").iterdir())
+    pdfs = list((tmp_path / "arc" / "imaparc-pdf" / "00_Mails").iterdir())
     assert len(pdfs) == 1, f"one mail became {len(pdfs)} PDFs: {pdfs}"
     assert len(report.written) == 1
     assert len(report.skipped) == 1

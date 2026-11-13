@@ -34,10 +34,12 @@ from imaparc.profiles import (
     EML_INPUT,
     LEGACY_EML_ARCHIVE,
     Profile,
+    archive_root,
     archived_eml_dir,
     eml_dirs,
     error_eml_dir,
     input_eml_dir,
+    pdf_output,
 )
 
 _HASH_PREFIX = "sha256:"
@@ -358,19 +360,20 @@ def unclaimed_profiles(profiles: list[Profile]) -> list[Profile]:
     checked like any other — or a mail waiting or failed there would be
     reported nowhere.
     """
-    claimed = {p.output.resolve() for p in profiles}
+    # By root and name: the PDFs may lie in <root>/<name> or <root>/imaparc-pdf/<name>.
+    claimed = {(archive_root(p.output).resolve(), p.output.name) for p in profiles}
     found: dict[Path, Profile] = {}
-    for root in sorted({p.output.parent for p in profiles}):
+    for root in sorted({archive_root(p.output) for p in profiles}):
         for group in (EML_INPUT, EML_ARCHIVE, EML_ERROR, LEGACY_EML_ARCHIVE):
             directory = root / group
             if not directory.is_dir():
                 continue
             for entry in sorted(directory.iterdir()):
-                output = root / entry.name
+                output = pdf_output(root, entry.name)
                 if (
                     entry.is_dir()
                     and not entry.name.startswith(".")
-                    and output.resolve() not in claimed
+                    and (root.resolve(), entry.name) not in claimed
                 ):
                     found.setdefault(
                         output,
@@ -387,7 +390,7 @@ def verify_loose(profiles: list[Profile]) -> list[Finding]:
     name of its own.
     """
     findings: list[Finding] = []
-    for root in sorted({p.output.parent for p in profiles}):
+    for root in sorted({archive_root(p.output) for p in profiles}):
         findings += _waiting(
             root / EML_INPUT, "pending", "wait in eml-input for a render", "(loose)"
         )

@@ -334,21 +334,45 @@ EML_ERROR = "eml-error"
 # 26.11.4 to 26.11.14 kept every mail in eml-Archiv/, before that in <output>/eml/.
 LEGACY_EML_ARCHIVE = "eml-Archiv"
 ERROR_NOTE_SUFFIX = ".error.txt"
+# Since 26.11.18 the finished PDFs live in one directory beside the eml-*
+# directories: <root>/imaparc-pdf/<profile>/. A profile whose output still sits
+# directly in the root (<root>/<profile>/) keeps working unchanged.
+PDF_DIR = "imaparc-pdf"
+
+
+def archive_root(output: Path) -> Path:
+    """The directory holding ``eml-input`` & co. for the profile at ``output``.
+
+    ``<root>/imaparc-pdf/<profile>`` and the older ``<root>/<profile>`` both
+    lead to ``<root>``, so the mail of a profile does not move when its PDFs do.
+    """
+    return output.parent.parent if output.parent.name == PDF_DIR else output.parent
+
+
+def pdf_output(root: Path, name: str) -> Path:
+    """Where the PDFs of a profile without a configured ``output`` lie
+    (``00_Mails``, or a profile removed from ``profile.yaml``).
+
+    ``<root>/imaparc-pdf/<name>`` — unless only the older ``<root>/<name>``
+    exists, so an archive not yet moved is not split in two.
+    """
+    current, legacy = root / PDF_DIR / name, root / name
+    return legacy if legacy.is_dir() and not current.is_dir() else current
 
 
 def input_eml_dir(output: Path) -> Path:
     """Where a profile's mail waits to be rendered — ``fetch`` delivers here."""
-    return output.parent / EML_INPUT / output.name
+    return archive_root(output) / EML_INPUT / output.name
 
 
 def archived_eml_dir(output: Path) -> Path:
     """Where a profile's mail lives once its PDF is rendered and stored."""
-    return output.parent / EML_ARCHIVE / output.name
+    return archive_root(output) / EML_ARCHIVE / output.name
 
 
 def error_eml_dir(output: Path) -> Path:
     """Where a profile's mail goes when it cannot be rendered correctly."""
-    return output.parent / EML_ERROR / output.name
+    return archive_root(output) / EML_ERROR / output.name
 
 
 def pending_eml_dirs(output: Path) -> tuple[Path, ...]:
@@ -365,7 +389,7 @@ def all_eml_dirs(output: Path) -> tuple[Path, ...]:
         input_eml_dir(output),
         archived_eml_dir(output),
         error_eml_dir(output),
-        output.parent / LEGACY_EML_ARCHIVE / output.name,
+        archive_root(output) / LEGACY_EML_ARCHIVE / output.name,
         output / "eml",
     )
 
