@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **The finished PDFs live in `imaparc-pdf/`.** New profiles default to
+  `~/imapArc/imaparc-pdf/<name>`, and mail that matches no profile goes to
+  `~/imapArc/imaparc-pdf/00_Mails`. The `eml-input`, `eml-archive` and
+  `eml-error` directories stay in `~/imapArc` — for a profile in
+  `imaparc-pdf/` they are looked up one level higher. Profiles whose `output`
+  still lies directly in `~/imapArc/<name>` keep working unchanged, and so
+  does an existing `~/imapArc/00_Mails` until it is moved.
+
 ### Fixed
 - **An unreachable IMAP server is one line, not a traceback.** No network, a
   wrong host, a timeout or a refused login now read e.g. `account 'privat'

@@ -77,8 +77,10 @@ profiles:
       smaller: 20MB                  #   Optional, default null. Only messages
                                      #   smaller than this (strictly).
 
-    output: ~/Archiv/Hetzner         # REQUIRED. Target directory of the PDFs;
-                                     #   beside it the .eml wait in
+    output: ~/imapArc/imaparc-pdf/Hetzner  # REQUIRED. Target directory of the
+                                     #   PDFs. With the usual <root>/imaparc-pdf/
+                                     #   <name> the .eml lie in <root>, else
+                                     #   beside it: they wait in
                                      #   eml-input/<name>/, are kept in
                                      #   eml-archive/<name>/ once rendered, or go
                                      #   to eml-error/<name>/ if that fails. "~"
@@ -148,7 +150,7 @@ profiles:
     account: privat
     match:
       domains: ['@news.example.com']
-    output: ~/Archiv/Newsletter
+    output: ~/imapArc/imaparc-pdf/Newsletter
     # pdf omitted -> false (eml only, no PDF rendering)
     after_fetch:
       delete: true                   # Remove from the server once safely archived.
@@ -161,6 +163,6 @@ profiles:
     match:
       folders: [INBOX, Projekte]     # scan two folders; no sender/subject rule
                                      # -> every message in them matches
-    output: ~/Archiv/Arbeit
+    output: ~/imapArc/imaparc-pdf/Arbeit
     pdf: true
     # after_fetch omitted -> the source message is left untouched on the server.

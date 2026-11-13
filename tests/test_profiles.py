@@ -449,3 +449,25 @@ def test_no_size_rule_accepts_any_size() -> None:
     p = _profile(domains=["hetzner.com"])
 
     assert matches(p, _headers(from_="x@hetzner.com"), size=99 * 1024 * 1024)
+
+
+def test_eml_directories_stay_in_the_root_when_the_pdfs_move(tmp_path: Path) -> None:
+    from imaparc.profiles import archive_root, archived_eml_dir, input_eml_dir
+
+    new, old = tmp_path / "imaparc-pdf" / "Kirsten", tmp_path / "Kirsten"
+
+    assert archive_root(new) == archive_root(old) == tmp_path
+    assert (
+        input_eml_dir(new) == input_eml_dir(old) == tmp_path / "eml-input" / "Kirsten"
+    )
+    assert archived_eml_dir(new) == tmp_path / "eml-archive" / "Kirsten"
+
+
+def test_pdf_output_keeps_an_archive_that_has_not_moved_yet(tmp_path: Path) -> None:
+    from imaparc.profiles import pdf_output
+
+    assert pdf_output(tmp_path, "00_Mails") == tmp_path / "imaparc-pdf" / "00_Mails"
+    (tmp_path / "00_Mails").mkdir()
+    assert pdf_output(tmp_path, "00_Mails") == tmp_path / "00_Mails"
+    (tmp_path / "imaparc-pdf" / "00_Mails").mkdir(parents=True)
+    assert pdf_output(tmp_path, "00_Mails") == tmp_path / "imaparc-pdf" / "00_Mails"

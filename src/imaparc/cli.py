@@ -35,7 +35,13 @@ from imaparc.extract import extract as extract_from_pdf
 from imaparc.fetch import run_fetch
 from imaparc.logging_setup import setup_logging
 from imaparc.mailonly import mail_only
-from imaparc.profiles import EML_INPUT, Profile, input_eml_dir, load_profiles
+from imaparc.profiles import (
+    EML_INPUT,
+    Profile,
+    archive_root,
+    input_eml_dir,
+    load_profiles,
+)
 from imaparc.render_run import run_render
 from imaparc.restore import RestoreOutcome, restore_files, summarise
 from imaparc.service import (
@@ -318,7 +324,9 @@ def add_profile(
     profile_file: _ProfilesOpt = DEFAULT_PROFILES,
     output: Annotated[
         Path | None,
-        typer.Option("--output", help="Target dir (default ~/imapArc/<name>)."),
+        typer.Option(
+            "--output", help="Target dir (default ~/imapArc/imaparc-pdf/<name>)."
+        ),
     ] = None,
 ) -> None:
     """Append a new, fully-annotated profile block to profile.yaml.
@@ -1082,7 +1090,7 @@ def _unclaimed_input(profiles: list[Profile]) -> list[tuple[Path, int]]:
     """
     claimed = {input_eml_dir(p.output) for p in profiles}
     found: list[tuple[Path, int]] = []
-    for root in sorted({p.output.parent / EML_INPUT for p in profiles}):
+    for root in sorted({archive_root(p.output) / EML_INPUT for p in profiles}):
         if not root.is_dir():
             continue
         for directory in [root, *sorted(d for d in root.iterdir() if d.is_dir())]:

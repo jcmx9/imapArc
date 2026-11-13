@@ -79,7 +79,7 @@ def test_renders_into_the_archive_and_archives_the_eml(tmp_path: Path) -> None:
     result = runner.invoke(app, ["eml", *_isolated(tmp_path), str(mail)])
 
     assert result.exit_code == 0, result.output
-    [pdf] = (tmp_path / "arc" / "00_Mails").iterdir()
+    [pdf] = (tmp_path / "arc" / "imaparc-pdf" / "00_Mails").iterdir()
     assert pdf.suffix == ".pdf"
     archive = tmp_path / "arc" / "eml-archive" / "00_Mails"
     assert (archive / f"{pdf.stem}.eml").is_file()

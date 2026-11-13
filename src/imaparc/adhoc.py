@@ -38,9 +38,11 @@ from imaparc.profiles import (
     EML_ERROR,
     EML_INPUT,
     Profile,
+    archive_root,
     archived_eml_dir,
     error_eml_dir,
     matching_profiles,
+    pdf_output,
 )
 from imaparc.render.browser import BrowserPool
 from imaparc.report import RunReport, validate_pdfa
@@ -120,7 +122,7 @@ def _profile_by_location(
         return []
     root = group.parent.resolve()
     for profile in profiles:
-        same_root = profile.output.parent.resolve() == root
+        same_root = archive_root(profile.output).resolve() == root
         if same_root and profile.output.name == place.name:
             return [profile]
     if place.name == FALLBACK_DIR:
@@ -129,8 +131,10 @@ def _profile_by_location(
 
 
 def fallback_profile(root: Path, name: str) -> Profile:
-    """Where a mail goes that no profile claims: ``<root>/00_Mails``."""
-    return Profile(name=name, account="-", output=root / FALLBACK_DIR, pdf=True)
+    """Where a mail goes that no profile claims: ``<root>/imaparc-pdf/00_Mails``
+    (``<root>/00_Mails`` while only that older directory exists)."""
+    output = pdf_output(root, FALLBACK_DIR)
+    return Profile(name=name, account="-", output=output, pdf=True)
 
 
 @dataclass

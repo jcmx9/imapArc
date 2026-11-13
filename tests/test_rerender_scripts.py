@@ -288,7 +288,9 @@ def test_archived_mail_without_a_pdf_returns_to_the_input(tmp_path: Path) -> Non
 
     assert _list(tmp_path, out) == []  # nothing to set aside
     found, loose_emls = check.discover(tmp_path, [out], tmp_path / "none.yaml")
-    assert [(a.kind, a.path) for a in found] == [("flat", root / "00_Mails")]
+    assert [(a.kind, a.path) for a in found] == [
+        ("flat", root / "imaparc-pdf" / "00_Mails")
+    ]
     assert loose_emls == []
 
     assert check._collect(out, root / "eml-input") == 0

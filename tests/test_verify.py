@@ -7,6 +7,7 @@ import zlib
 from pathlib import Path
 
 import pikepdf
+import pytest
 
 from imaparc.pdf import provenance
 from imaparc.profiles import Profile
@@ -338,7 +339,9 @@ def test_archives_without_a_profile_are_checked_too(tmp_path: Path) -> None:
 
     extra = unclaimed_profiles([configured])
 
-    assert [(p.name, p.output) for p in extra] == [("00_Mails", tmp_path / "00_Mails")]
+    assert [(p.name, p.output) for p in extra] == [
+        ("00_Mails", tmp_path / "imaparc-pdf" / "00_Mails")
+    ]
     assert _kinds(verify_profile(extra[0])) == {"failed"}
 
 
@@ -472,3 +475,18 @@ def test_a_lone_warning_keeps_its_detail() -> None:
     findings = [Finding("staging", Severity.WARN, "p", "leftover: .staging-x")]
 
     assert ".staging-x" in _verify_lines(findings, verbose=False)[0]
+
+
+@pytest.mark.parametrize("layout", ["imaparc-pdf", "legacy"])
+def test_a_profile_counts_as_claimed_in_either_layout(
+    tmp_path: Path, layout: str
+) -> None:
+    from imaparc.verify import unclaimed_profiles
+
+    output = (
+        tmp_path / "imaparc-pdf" / "p" if layout == "imaparc-pdf" else tmp_path / "p"
+    )
+    output.mkdir(parents=True)
+    (tmp_path / "eml-archive" / "p").mkdir(parents=True)
+
+    assert unclaimed_profiles([_profile(output)]) == []
