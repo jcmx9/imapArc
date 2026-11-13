@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.18] - 2026-11-13
+
 ### Changed
 - **The finished PDFs live in `imaparc-pdf/`.** New profiles default to
   `~/imapArc/imaparc-pdf/<name>`, and mail that matches no profile goes to
