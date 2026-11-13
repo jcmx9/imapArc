@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.17] - 2026-11-13
+
 ### Added
 - **Scanned attachments become searchable.** An attachment page that is an
   image with no text at all, or mostly image with hardly any text, gets an
