@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.14] - 2026-11-13
+
 ### Changed
 - The header block shows the year with four digits:
   `19.10.2026, 11:32 (UTC+2)`.
