@@ -104,4 +104,6 @@ The archive is **flat** (since 26.11.6) and **the directory a mail's `.eml` lies
 - Do not generate PDFs for mail-only messages; only render PDFs from existing .eml files.
 - Keep imaparc profile output paths under ~/imapArc/; do not change them to point elsewhere, since relocating files is the user's call.
 - Avoid dots and commas in generated filenames and folder names; use underscores or hyphens instead.
+- OCR only attachment pages that are an image with no text, or mostly image with hardly any text (`PageContent.wants_ocr`); leave every other page with a text layer unchanged. The user accepted on 2026-11-13 that redoing such a page can lose a weak old recognition. The original attachment in the `.eml` is never touched.
+- A correctly rendered mail's `.eml` moves from `eml-input` to `eml-archive`; a failed one moves to `eml-error` with `<name>.error.txt`, and no PDF is ever stored for it (no fallback with less content).
 <!-- end claude-reflect -->
