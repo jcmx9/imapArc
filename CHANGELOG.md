@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [26.11.19] - 2026-11-25
+
 ### Fixed
 - **Chromium only starts where mail waits.** A profile whose `eml-input`
   directory exists but is empty no longer launches a browser (leftover
