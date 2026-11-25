@@ -111,6 +111,12 @@ async def run_render(
     with make_progress(disable=verbosity == 0 or total == 0) as progress:
         task = progress.add_task("Rendering mail", total=total)
         for profile, config, output, mails in plans:
+            if not mails:
+                # Nothing waits: no browser to start. Leftovers of an aborted
+                # run are still cleared, as a render would have done.
+                if output.is_dir():
+                    sweep_staging(output)
+                continue
             semaphore = asyncio.Semaphore(config.jobs)
             # Separate bound: Ghostscript holds a whole document in memory, so it
             # must not scale with the number of mails rendered at once.

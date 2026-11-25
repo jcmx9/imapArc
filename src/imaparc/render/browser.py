@@ -92,6 +92,9 @@ def _launch_failure_message(exc: PlaywrightError) -> str:
     )
 
 
+_remote_warned = False
+
+
 class BrowserPool:
     """Owns the Chromium process for the duration of a run.
 
@@ -121,11 +124,17 @@ class BrowserPool:
             await self._pw.stop()
             self._pw = None
             raise BrowserLaunchError(_launch_failure_message(exc)) from exc
-        if self._allow_remote:
+        global _remote_warned
+        if self._allow_remote and not _remote_warned:
+            # Once per process: a run starts one browser per profile, and the
+            # same warning four times reads like four problems.
+            _remote_warned = True
             logger.warning(
                 "Chromium started with remote content ALLOWED — senders can "
                 "observe that these mails were processed"
             )
+        elif self._allow_remote:
+            logger.debug("Chromium launched with remote content allowed")
         else:
             logger.debug("Chromium launched with full network lockdown")
         return self

@@ -5,6 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Chromium only starts where mail waits.** A profile whose `eml-input`
+  directory exists but is empty no longer launches a browser (leftover
+  `.tmp-*` files are still cleared), and the "remote content ALLOWED" warning
+  appears at most once per run instead of once per profile.
+
 ## [26.11.18] - 2026-11-13
 
 ### Changed
